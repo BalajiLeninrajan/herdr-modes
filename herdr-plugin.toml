@@ -1,0 +1,54 @@
+id = "herdr-modes"
+name = "Herdr Modes"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+description = "Zellij-style sticky pane/tab/move modes for herdr"
+platforms = ["macos", "linux"]
+
+# Each action opens the matching modal popup. Actions run detached without a
+# TTY, so they cannot host the key loop themselves — they open a pane that can.
+[[actions]]
+id = "pane"
+title = "Pane mode"
+contexts = ["global"]
+command = ["./target/release/herdr-modes", "open", "pane"]
+
+[[actions]]
+id = "tab"
+title = "Tab mode"
+contexts = ["global"]
+command = ["./target/release/herdr-modes", "open", "tab"]
+
+[[actions]]
+id = "move"
+title = "Move mode"
+contexts = ["global"]
+command = ["./target/release/herdr-modes", "open", "move"]
+
+# Session-modal popups. height = 4 yields two interior rows: legend + feedback.
+[[panes]]
+id = "pane"
+title = "Pane Mode"
+placement = "popup"
+command = ["./target/release/herdr-modes", "run", "pane"]
+width = "90%"
+height = 4
+
+[[panes]]
+id = "tab"
+title = "Tab Mode"
+placement = "popup"
+command = ["./target/release/herdr-modes", "run", "tab"]
+width = "90%"
+height = 4
+
+[[panes]]
+id = "move"
+title = "Move Mode"
+placement = "popup"
+command = ["./target/release/herdr-modes", "run", "move"]
+width = "90%"
+height = 4
+
+[[build]]
+command = ["cargo", "build", "--release"]
