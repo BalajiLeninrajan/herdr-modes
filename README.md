@@ -67,9 +67,10 @@ herdr server reload-config
 
 ## Keys
 
-Transcribed from a zellij config, **including per-key stickiness** — zellij is
-mixed about this, so movement keys stay in the mode while creation keys fall
-back to normal.
+These are the **defaults** — every one is configurable, see
+[Configuration](#configuration). They were transcribed from a zellij config,
+**including per-key stickiness**: zellij is mixed about this, so movement keys
+stay in the mode while creation keys fall back to normal.
 
 ### pane mode — `prefix+p`
 
@@ -109,6 +110,47 @@ back to normal.
 Keys with no herdr equivalent are deliberately unbound: floating, pinned, and
 stacked panes, pane-frame toggling, and tab input sync. `z` is a free alias for
 zoom because zellij used it for pane frames.
+
+## Configuration
+
+Optional. Without a config file you get the defaults above.
+
+Create `~/.config/herdr/plugins/config/herdr-modes/config.toml` — herdr makes
+that directory per plugin and passes it as `$HERDR_PLUGIN_CONFIG_DIR`. See
+[`config.example.toml`](config.example.toml) for the full reference.
+
+```toml
+[modes.pane]
+label = "WINDOW"          # hint-bar label
+
+[modes.pane.keys]
+w = "focus_up"                                 # add or rebind
+k = ""                                         # unbind
+x = { action = "close_pane", sticky = false }  # override stickiness
+```
+
+Overrides **merge** into the defaults, so you write only what differs, and
+`key = ""` unbinds — the same convention herdr's own config uses. To start a
+mode from scratch instead, set `defaults = false` on it.
+
+The hint bar is generated from whatever bindings are active, with keys sharing
+an action collapsed together (`hjkl focus`), so it never drifts out of sync with
+the keymap. Set `hint = "..."` on a mode to write it yourself.
+
+Mode names are just strings. Adding a brand-new mode needs an `[[actions]]` and
+a `[[panes]]` entry in `herdr-plugin.toml` and a `[[keys.command]]` in herdr's
+config to open it, but nothing in the binary is hardcoded to the three built-ins.
+
+Validate a config and print the resolved keymaps:
+
+```bash
+herdr-modes check
+```
+
+It reports unknown actions, unparseable keys, and malformed TOML, exits non-zero
+if anything is wrong, and still applies every binding that did parse — a typo
+costs you one binding, not the whole keymap. The same warnings appear in the
+mode's feedback row at runtime.
 
 ## Notes on the herdr API
 

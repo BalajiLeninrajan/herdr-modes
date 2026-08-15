@@ -1,0 +1,40 @@
+# herdr-modes configuration
+# Copy to: ~/.config/herdr/plugins/config/herdr-modes/config.toml
+# Validate with: herdr-modes check
+#
+# Overrides merge into the built-in defaults, so you only write what differs.
+
+[modes.pane]
+# label = "PANE"            # shown in the hint bar; defaults to the mode name
+# hint  = "custom text"     # defaults to a legend generated from the bindings
+
+[modes.pane.keys]
+# w = "focus_up"                                 # add or rebind
+# k = ""                                         # unbind
+# x = { action = "close_pane", sticky = false }  # override stickiness
+
+# Start from nothing instead of the defaults:
+# [modes.pane]
+# defaults = false
+
+# Modes are just names. Adding a new one also needs an [[actions]] and a
+# [[panes]] entry in herdr-plugin.toml, plus a [[keys.command]] in herdr's
+# config.toml to open it.
+# [modes.zap]
+# defaults = false
+# [modes.zap.keys]
+# z = "zoom"
+# q = "exit"
+
+# ─── actions ───────────────────────────────────────────────────────────────
+# pane:  focus_left focus_right focus_up focus_down  cycle_focus  close_pane
+#        split_right split_down  zoom  rename_pane
+# tab:   prev_tab next_tab last_tab  goto_tab (bind to 1-9)  new_tab
+#        close_tab rename_tab  move_tab_left move_tab_right
+#        break_pane_new break_pane_prev break_pane_next
+# move:  swap_left swap_right swap_up swap_down  swap_forward swap_backward
+# any:   exit
+#
+# ─── keys ──────────────────────────────────────────────────────────────────
+# single characters ("h", "H", "1", "["), named keys ("tab", "enter", "esc",
+# "backspace", "space"), and ctrl chords ("ctrl+c").
