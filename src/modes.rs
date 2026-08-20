@@ -4,6 +4,24 @@ use crate::client::{Client, Error};
 use crate::keymap::{Action, BreakTarget, Dir};
 use serde_json::{Value, json};
 
+/// One row of herdr's agent panel, in the order `agent.list` reports them:
+/// grouped by space, which is the panel's own `agent_panel_sort = "spaces"`
+/// ordering.
+struct Agent {
+    pane_id: String,
+    status: String,
+    label: String,
+}
+
+impl Agent {
+    /// `blocked` is an approval or question waiting on you; `done` is finished
+    /// background work you have not seen yet. Those two are the panel's
+    /// attention queue — the rest are either busy or already read.
+    fn wants_attention(&self) -> bool {
+        self.status == "blocked" || self.status == "done"
+    }
+}
+
 pub struct Session {
     pub client: Client,
     pub workspace_id: String,
@@ -11,11 +29,20 @@ pub struct Session {
     pub pane_id: String,
     /// For zellij's `tab` binding (ToggleTab).
     prev_tab_id: Option<String>,
+    /// The agent pane focus came from, for `last_agent`.
+    prev_agent_id: Option<String>,
 }
 
 impl Session {
     pub fn new(client: Client, workspace_id: String, tab_id: String, pane_id: String) -> Self {
-        Session { client, workspace_id, tab_id, pane_id, prev_tab_id: None }
+        Session {
+            client,
+            workspace_id,
+            tab_id,
+            pane_id,
+            prev_tab_id: None,
+            prev_agent_id: None,
+        }
     }
 
     /// Re-read focus from the server. Popups have no pane id of their own, so
@@ -104,6 +131,13 @@ impl Session {
 
             Action::Swap(dir) => self.swap(dir),
             Action::SwapCycle(forward) => self.swap_cycle(forward),
+
+            Action::PrevAgent => self.step_agent(-1),
+            Action::NextAgent => self.step_agent(1),
+            Action::LastAgent => self.last_agent(),
+            Action::GotoAgent(n) => self.goto_agent(n),
+            Action::NextAttention => self.step_attention(1),
+            Action::PrevAttention => self.step_attention(-1),
 
             Action::Quit => Ok(String::new()),
         }
@@ -281,5 +315,109 @@ impl Session {
             json!({ "source_pane_id": self.pane_id, "target_pane_id": panes[idx as usize] }),
         )?;
         Ok(if forward { "swap forward".into() } else { "swap back".into() })
+    }
+
+    fn agents(&mut self) -> Result<Vec<Agent>, Error> {
+        let r = self.client.call("agent.list", json!({}))?;
+        Ok(r["agents"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|a| {
+                        Some(Agent {
+                            pane_id: a["pane_id"].as_str()?.to_string(),
+                            status: a["agent_status"].as_str().unwrap_or("unknown").to_string(),
+                            // Most identifying first: several rows are usually
+                            // the same kind of agent, so "claude" names nothing.
+                            label: ["name", "terminal_title_stripped", "display_agent", "agent"]
+                                .iter()
+                                .find_map(|k| a[k].as_str())
+                                .unwrap_or("agent")
+                                .to_string(),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    /// Where the panel's cursor sits: the agent holding the focused pane, or
+    /// `None` when focus is on a pane that has no agent in it at all.
+    fn agent_at_focus(&self, agents: &[Agent]) -> Option<usize> {
+        agents.iter().position(|a| a.pane_id == self.pane_id)
+    }
+
+    /// `agent.focus` crosses spaces and tabs on its own, so the whole snapshot
+    /// has to be re-read afterwards, not just the pane.
+    fn focus_agent(&mut self, agents: &[Agent], index: usize) -> Result<String, Error> {
+        let target = &agents[index];
+        let n = agents.len();
+        if target.pane_id == self.pane_id {
+            return Ok(format!("{}/{n} {} \u{b7} already here", index + 1, target.label));
+        }
+        let line = format!("{}/{n} {} \u{b7} {}", index + 1, target.label, target.status);
+        self.client
+            .call("agent.focus", json!({ "target": &target.pane_id }))?;
+        if self.agent_at_focus(agents).is_some() {
+            self.prev_agent_id = Some(self.pane_id.clone());
+        }
+        self.refresh()?;
+        Ok(line)
+    }
+
+    fn step_agent(&mut self, delta: i64) -> Result<String, Error> {
+        let agents = self.agents()?;
+        if agents.is_empty() {
+            return Ok("no agents".into());
+        }
+        let n = agents.len() as i64;
+        // From a pane with no agent in it, stepping enters the panel at
+        // whichever end the direction implies rather than doing nothing.
+        let next = match self.agent_at_focus(&agents) {
+            Some(cur) => ((cur as i64 + delta) % n + n) % n,
+            None if delta > 0 => 0,
+            None => n - 1,
+        };
+        self.focus_agent(&agents, next as usize)
+    }
+
+    fn goto_agent(&mut self, n: usize) -> Result<String, Error> {
+        let agents = self.agents()?;
+        if n > agents.len() {
+            return Ok(format!("no agent {n}"));
+        }
+        self.focus_agent(&agents, n - 1)
+    }
+
+    fn last_agent(&mut self) -> Result<String, Error> {
+        let agents = self.agents()?;
+        let prev = self.prev_agent_id.clone();
+        // The agent may have exited while we were away.
+        let Some(index) = prev.and_then(|p| agents.iter().position(|a| a.pane_id == p)) else {
+            return Ok("no previous agent".into());
+        };
+        self.focus_agent(&agents, index)
+    }
+
+    /// Walk the panel from the cursor until an agent that wants you turns up,
+    /// wrapping once around. Skipping the busy ones is the whole point, so this
+    /// searches the list rather than cycling a filtered copy of it.
+    fn step_attention(&mut self, delta: i64) -> Result<String, Error> {
+        let agents = self.agents()?;
+        if agents.is_empty() {
+            return Ok("no agents".into());
+        }
+        let n = agents.len() as i64;
+        // Starting off the panel puts the search just outside the near end, so
+        // the first step lands on that end row instead of skipping it.
+        let off_panel = if delta > 0 { -1 } else { n };
+        let from = self.agent_at_focus(&agents).map_or(off_panel, |i| i as i64);
+        let hit = (1..=n)
+            .map(|step| (((from + delta * step) % n + n) % n) as usize)
+            .find(|i| agents[*i].wants_attention());
+        match hit {
+            Some(i) => self.focus_agent(&agents, i),
+            None => Ok("nothing waiting".into()),
+        }
     }
 }

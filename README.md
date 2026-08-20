@@ -12,8 +12,9 @@ is a ready-made zellij-shaped one to start from.
 herdr's key model is tmux-shaped: one prefix plus a flat namespace of named
 actions. There is no user-definable mode. But three modes *are* already sticky —
 `resize_mode`, `copy_mode` (which subsumes zellij's scroll + search +
-entersearch), and `goto` — so this plugin supplies only the three that are
-missing: **pane**, **tab**, and **move**.
+entersearch), and `goto` — so this plugin supplies the three that are missing —
+**pane**, **tab**, and **move** — plus **agent**, which has no zellij
+counterpart at all: sticky navigation of herdr's agent panel.
 
 ## How it works
 
@@ -61,6 +62,12 @@ key = "prefix+m"
 type = "plugin_action"
 command = "herdr-modes.move"
 description = "move mode"
+
+[[keys.command]]
+key = "prefix+a"
+type = "plugin_action"
+command = "herdr-modes.agent"
+description = "agent mode"
 ```
 
 Validate and reload:
@@ -87,11 +94,26 @@ The actions each mode can bind:
 | pane | `focus_left` `focus_right` `focus_up` `focus_down` `cycle_focus` `close_pane` `split_right` `split_down` `zoom` `rename_pane` |
 | tab | `prev_tab` `next_tab` `last_tab` `goto_tab` (bind to `1`–`9`) `new_tab` `close_tab` `rename_tab` `move_tab_left` `move_tab_right` `break_pane_new` `break_pane_prev` `break_pane_next` |
 | move | `swap_left` `swap_right` `swap_up` `swap_down` `swap_forward` `swap_backward` |
+| agent | `prev_agent` `next_agent` `last_agent` `goto_agent` (bind to `1`–`9`) `next_attention` `prev_attention` |
 | any | `exit` |
 
 Modes are only namespaces for a keymap, so any action can be bound in any mode.
 Keys with no herdr equivalent have no action at all: floating, pinned, and
 stacked panes, pane-frame toggling, and tab input sync.
+
+### Agent mode
+
+herdr's own `previous_agent` / `next_agent` / `focus_agent` are flat prefix
+bindings, so stepping three agents down the panel costs three prefixes. Agent
+mode makes the same walk sticky, and adds the jump the flat namespace has no
+room for: `next_attention` skips every agent that is still working and lands on
+the next one that is **blocked** on you or **done** with work you have not seen
+— herdr's attention queue, walked one keystroke at a time.
+
+Navigation follows the order `agent.list` reports, which is the panel's own
+`agent_panel_sort = "spaces"` grouping; `goto_agent` counts rows in that same
+order. Focusing an agent crosses spaces and tabs on its own, and (as anywhere
+in herdr) marks it seen, so a `done` agent becomes `idle` once you land on it.
 
 ## Configuration
 
@@ -143,6 +165,9 @@ Two behaviours worth knowing if you build on this:
 - **The socket is one request per connection.** The server closes the connection
   as soon as it answers. Only `events.subscribe` holds one open. A client that
   caches a connection will see `Broken pipe` on its second call.
+- **`agent.focus` takes any agent target, including a pane id.** `agent.list`
+  hands back `pane_id` for every row, so panel navigation needs no separate
+  name lookup — and the focus crosses workspace and tab boundaries itself.
 - **`tab.move`'s `insert_index` counts the tab being moved.** The index is
   evaluated against the list *including* that tab, so moving one slot right
   needs `cur + 2`, not `cur + 1`. Moving left needs no adjustment.

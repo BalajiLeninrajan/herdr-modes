@@ -2,7 +2,7 @@ id = "herdr-modes"
 name = "Herdr Modes"
 version = "0.1.0"
 min_herdr_version = "0.7.0"
-description = "Zellij-style sticky pane/tab/move modes for herdr"
+description = "Zellij-style sticky pane/tab/move/agent modes for herdr"
 platforms = ["macos", "linux"]
 
 # Each action opens the matching modal popup. Actions run detached without a
@@ -24,6 +24,12 @@ id = "move"
 title = "Move mode"
 contexts = ["global"]
 command = ["./target/release/herdr-modes", "open", "move"]
+
+[[actions]]
+id = "agent"
+title = "Agent mode"
+contexts = ["global"]
+command = ["./target/release/herdr-modes", "open", "agent"]
 
 # Session-modal popups. height = 4 yields two interior rows: legend + feedback.
 [[panes]]
@@ -47,6 +53,14 @@ id = "move"
 title = "Move Mode"
 placement = "popup"
 command = ["./target/release/herdr-modes", "run", "move"]
+width = "90%"
+height = 4
+
+[[panes]]
+id = "agent"
+title = "Agent Mode"
+placement = "popup"
+command = ["./target/release/herdr-modes", "run", "agent"]
 width = "90%"
 height = 4
 
