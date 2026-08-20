@@ -64,7 +64,7 @@ fn check() -> ExitCode {
     let (modes, warnings) = config::load();
     match config::config_path() {
         Some(p) if p.exists() => println!("config: {}", p.display()),
-        Some(p) => println!("config: {} (not present, using defaults)", p.display()),
+        Some(p) => println!("config: {} (not present, only the exits are bound)", p.display()),
         None => println!("config: <unresolved>"),
     }
     println!();
@@ -73,8 +73,11 @@ fn check() -> ExitCode {
     names.sort();
     for name in names {
         let mode = &modes[name];
-        println!("[{}]  label={}  {} bindings", mode.name, mode.label, mode.keys.len());
-        println!("  {}", mode.hint_text());
+        println!("[{}]  label={}  {} bindings", name, mode.label, mode.keys.len());
+        match mode.hint_text() {
+            Some(h) => println!("  {h}"),
+            None => println!("  (hint bar hidden)"),
+        }
     }
 
     if warnings.is_empty() {
@@ -155,7 +158,7 @@ fn run(mode_name: &str) -> Result<(), client::Error> {
     };
 
     loop {
-        hint::render(&mut out, &mode.label, &hint_text, &feedback)?;
+        hint::render(&mut out, &mode.label, hint_text.as_deref(), &feedback)?;
 
         let Event::Key(key) = event::read()? else {
             continue;

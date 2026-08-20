@@ -1,4 +1,5 @@
-//! User configuration, layered over the built-in defaults.
+//! The user's keymap. The binary contributes only the exits, so everything
+//! else in a mode comes from here.
 //!
 //! Lives at `$HERDR_PLUGIN_CONFIG_DIR/config.toml`, which herdr creates per
 //! plugin (`~/.config/herdr/plugins/config/herdr-modes/`).
@@ -7,6 +8,7 @@
 //! [modes.pane]
 //! label = "PANE"          # optional; defaults to the mode name uppercased
 //! hint  = "custom text"   # optional; generated from the bindings otherwise
+//!                         # `hint = ""` hides the hint bar
 //!
 //! [modes.pane.keys]
 //! w = "focus_up"                                  # add or override
@@ -14,14 +16,14 @@
 //! x = { action = "close_pane", sticky = false }   # override stickiness
 //! ```
 //!
-//! Overrides merge into the defaults, matching herdr's own config style where
-//! `previous_tab = ""` unbinds. Set `defaults = false` on a mode to start from
-//! an empty table instead.
+//! Bindings merge over the exits, matching herdr's own config style where
+//! `previous_tab = ""` unbinds. Set `defaults = false` on a mode to drop the
+//! exits too and start from an empty table.
 
-use crate::keymap::{Action, Binding, DEFAULTS, KeySpec, Mode, SHARED_EXITS};
+use crate::keymap::{Action, Binding, KeySpec, MODE_NAMES, Mode, SHARED_EXITS};
 use serde::Deserialize;
-use std::collections::HashMap;
-use std::path::PathBuf;
+use std::collections::{BTreeSet, HashMap};
+use std::path::{Path, PathBuf};
 
 #[derive(Deserialize, Default)]
 struct File {
@@ -33,7 +35,7 @@ struct File {
 struct ModeConfig {
     label: Option<String>,
     hint: Option<String>,
-    /// Start from the built-in bindings for this mode. Default true.
+    /// Start from the built-in bindings, which are just the exits. Default true.
     #[serde(default = "yes")]
     defaults: bool,
     #[serde(default)]
@@ -67,114 +69,96 @@ pub fn config_path() -> Option<PathBuf> {
 pub fn load() -> (HashMap<String, Mode>, Vec<String>) {
     let mut warnings = Vec::new();
 
-    let file: File = match config_path() {
-        Some(p) if p.exists() => match std::fs::read_to_string(&p) {
-            Ok(text) => match toml::from_str(&text) {
-                Ok(f) => f,
-                Err(e) => {
-                    warnings.push(format!("{}: {e}", p.display()));
-                    File::default()
-                }
-            },
-            Err(e) => {
-                warnings.push(format!("{}: {e}", p.display()));
-                File::default()
-            }
-        },
-        _ => File::default(),
+    let file = match config_path().filter(|p| p.exists()) {
+        Some(p) => read(&p).unwrap_or_else(|e| {
+            warnings.push(format!("{}: {e}", p.display()));
+            File::default()
+        }),
+        None => File::default(),
     };
 
-    // Every mode named in the defaults or in the config gets built.
-    let mut names: Vec<String> = Vec::new();
-    for (mode, _, _) in DEFAULTS {
-        if !names.iter().any(|n| n == mode) {
-            names.push((*mode).to_string());
-        }
-    }
-    for name in file.modes.keys() {
-        if !names.contains(name) {
-            names.push(name.clone());
-        }
-    }
+    // Every built-in mode, plus any the config names, gets built.
+    let names: BTreeSet<&str> = MODE_NAMES
+        .iter()
+        .copied()
+        .chain(file.modes.keys().map(String::as_str))
+        .collect();
 
     let mut modes = HashMap::new();
     for name in names {
-        let cfg = file.modes.get(&name);
+        let cfg = file.modes.get(name);
         let mut mode = Mode {
-            label: cfg
-                .and_then(|c| c.label.clone())
-                .unwrap_or_else(|| name.to_uppercase()),
+            label: cfg.and_then(|c| c.label.clone()).unwrap_or_else(|| name.to_uppercase()),
             hint: cfg.and_then(|c| c.hint.clone()),
-            name: name.clone(),
-            keys: HashMap::new(),
-            order: Vec::new(),
+            keys: Vec::new(),
         };
 
-        let use_defaults = cfg.map(|c| c.defaults).unwrap_or(true);
-        if use_defaults {
-            for (m, key, action) in DEFAULTS.iter().filter(|(m, _, _)| *m == name) {
-                insert(&mut mode, key, action, None, &mut warnings, "default");
-                let _ = m;
-            }
-        }
-        // Shared exits are defaults too, so they can be rebound or unbound.
-        if use_defaults {
+        // The shared exits are the only built-ins, and they can still be
+        // rebound or unbound per mode.
+        if cfg.map(|c| c.defaults).unwrap_or(true) {
             for (key, action) in SHARED_EXITS {
-                insert(&mut mode, key, action, None, &mut warnings, "default");
+                if let Some(spec) = parse_key(key, "default", &mut warnings) {
+                    insert(&mut mode, spec, action, None, &mut warnings, "default");
+                }
             }
         }
 
         if let Some(cfg) = cfg {
-            for (key, binding) in &cfg.keys {
+            // TOML tables deserialize unordered; sort so the generated hint bar
+            // and any warnings come out the same on every run.
+            let mut keys: Vec<_> = cfg.keys.iter().collect();
+            keys.sort_by(|a, b| a.0.cmp(b.0));
+            for (key, binding) in keys {
                 let (action, sticky) = match binding {
-                    BindingConfig::Action(a) => (a.clone(), None),
-                    BindingConfig::Full { action, sticky } => (action.clone(), *sticky),
+                    BindingConfig::Action(a) => (a.as_str(), None),
+                    BindingConfig::Full { action, sticky } => (action.as_str(), *sticky),
                 };
-                if action.is_empty() {
-                    // `key = ""` unbinds.
-                    if let Ok(spec) = KeySpec::parse(key) {
-                        mode.keys.remove(&spec);
-                        mode.order.retain(|s| *s != spec);
-                    }
-                    continue;
+                let Some(spec) = parse_key(key, name, &mut warnings) else { continue };
+                // `key = ""` unbinds.
+                match action.is_empty() {
+                    true => mode.unbind(spec),
+                    false => insert(&mut mode, spec, action, sticky, &mut warnings, name),
                 }
-                insert(&mut mode, key, &action, sticky, &mut warnings, &name);
             }
         }
 
-        modes.insert(name.clone(), mode);
+        modes.insert(name.to_string(), mode);
     }
 
     (modes, warnings)
 }
 
+fn read(path: &Path) -> Result<File, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    toml::from_str(&text).map_err(|e| e.to_string())
+}
+
+fn parse_key(key: &str, origin: &str, warnings: &mut Vec<String>) -> Option<KeySpec> {
+    match KeySpec::parse(key) {
+        Ok(s) => Some(s),
+        Err(e) => {
+            warnings.push(format!("[{origin}] {e}"));
+            None
+        }
+    }
+}
+
 fn insert(
     mode: &mut Mode,
-    key: &str,
+    spec: KeySpec,
     action: &str,
     sticky: Option<bool>,
     warnings: &mut Vec<String>,
     origin: &str,
 ) {
-    let spec = match KeySpec::parse(key) {
-        Ok(s) => s,
-        Err(e) => {
-            warnings.push(format!("[{origin}] {e}"));
-            return;
-        }
-    };
     let action = match Action::parse(action, &spec) {
         Ok(a) => a,
         Err(e) => {
-            warnings.push(format!("[{origin}] key `{key}`: {e}"));
+            warnings.push(format!("[{origin}] key `{spec}`: {e}"));
             return;
         }
     };
-    if !mode.keys.contains_key(&spec) {
-        mode.order.push(spec);
-    }
-    mode.keys.insert(
-        spec,
-        Binding { action, sticky: sticky.unwrap_or_else(|| action.default_sticky()) },
-    );
+    // Nothing is sticky unless the binding asks for it: one keystroke, then
+    // the mode closes.
+    mode.bind(spec, Binding { action, sticky: sticky.unwrap_or(false) });
 }

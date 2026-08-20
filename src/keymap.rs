@@ -1,11 +1,10 @@
-//! Actions, key specs, and the built-in default keymaps.
+//! Actions, key specs, and the resolved keymap a mode runs on.
 //!
-//! Everything here is data. The defaults below are one particular
-//! transcription (from a zellij config); `config.rs` layers user overrides on
-//! top, so nothing in this file is privileged beyond being the fallback.
+//! Everything here is data. The keymap itself comes from the user's config;
+//! the only bindings this file contributes are the exits, so a mode is always
+//! escapable before it is configured.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use std::collections::HashMap;
 use std::fmt;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -104,31 +103,6 @@ impl Action {
             other => return Err(format!("unknown action `{other}`")),
         };
         Ok(a)
-    }
-
-    /// Whether the mode stays open after this action, unless config overrides it.
-    pub fn default_sticky(self) -> bool {
-        match self {
-            Action::Focus(_)
-            | Action::CycleFocus
-            | Action::ClosePane
-            | Action::PrevTab
-            | Action::NextTab
-            | Action::LastTab
-            | Action::CloseTab
-            | Action::MoveTab(_)
-            | Action::Swap(_)
-            | Action::SwapCycle(_) => true,
-
-            Action::Split(_)
-            | Action::Zoom
-            | Action::RenamePane
-            | Action::GotoTab(_)
-            | Action::NewTab
-            | Action::RenameTab
-            | Action::BreakPane(_)
-            | Action::Quit => false,
-        }
     }
 
     /// Short label for the auto-generated hint bar. Directional variants share
@@ -235,28 +209,40 @@ pub struct Binding {
 }
 
 pub struct Mode {
-    pub name: String,
     pub label: String,
     pub hint: Option<String>,
-    pub keys: HashMap<KeySpec, Binding>,
-    /// Insertion order, so the generated hint reads in a stable, sensible order.
-    pub order: Vec<KeySpec>,
+    /// Kept in insertion order, so the generated hint reads the same way twice.
+    /// A handful of entries per mode, so a scan beats a map.
+    pub keys: Vec<(KeySpec, Binding)>,
 }
 
 impl Mode {
     pub fn lookup(&self, ev: &KeyEvent) -> Option<Binding> {
-        self.keys.get(&KeySpec::from_event(ev)?).copied()
+        let spec = KeySpec::from_event(ev)?;
+        self.keys.iter().find(|(s, _)| *s == spec).map(|(_, b)| *b)
+    }
+
+    /// Bind a key, replacing whatever it was bound to.
+    pub fn bind(&mut self, spec: KeySpec, binding: Binding) {
+        match self.keys.iter_mut().find(|(s, _)| *s == spec) {
+            Some((_, b)) => *b = binding,
+            None => self.keys.push((spec, binding)),
+        }
+    }
+
+    pub fn unbind(&mut self, spec: KeySpec) {
+        self.keys.retain(|(s, _)| *s != spec);
     }
 
     /// Hint bar text: the configured string, or one generated from the
-    /// bindings with keys sharing a label collapsed together.
-    pub fn hint_text(&self) -> String {
+    /// bindings with keys sharing a label collapsed together. `hint = ""`
+    /// hides the bar entirely, so this returns `None`.
+    pub fn hint_text(&self) -> Option<String> {
         if let Some(h) = &self.hint {
-            return h.clone();
+            return (!h.is_empty()).then(|| h.clone());
         }
         let mut groups: Vec<(&'static str, String)> = Vec::new();
-        for spec in &self.order {
-            let Some(b) = self.keys.get(spec) else { continue };
+        for (spec, b) in &self.keys {
             let label = b.action.hint_label();
             match groups.iter_mut().find(|(l, _)| *l == label) {
                 Some((_, keys)) => {
@@ -276,68 +262,22 @@ impl Mode {
                 None => groups.push((label, spec.to_string())),
             }
         }
-        groups
-            .into_iter()
-            .map(|(label, keys)| format!("{keys} {label}"))
-            .collect::<Vec<_>>()
-            .join("  ")
+        Some(
+            groups
+                .into_iter()
+                .map(|(label, keys)| format!("{keys} {label}"))
+                .collect::<Vec<_>>()
+                .join("  "),
+        )
     }
 }
 
-/// (mode, key, action) triples. Stickiness comes from `Action::default_sticky`
-/// unless a user overrides it.
-///
-/// Transcribed from a zellij config, including its mixed stickiness: movement
-/// keys stay in the mode, creation keys fall back to normal.
-pub const DEFAULTS: &[(&str, &str, &str)] = &[
-    // pane
-    ("pane", "h", "focus_left"),
-    ("pane", "j", "focus_down"),
-    ("pane", "k", "focus_up"),
-    ("pane", "l", "focus_right"),
-    ("pane", "p", "cycle_focus"),
-    ("pane", "x", "close_pane"),
-    ("pane", "d", "split_down"),
-    ("pane", "r", "split_right"),
-    ("pane", "n", "split_right"),
-    // `f` is zellij's fullscreen; `z` was pane frames, which herdr has no
-    // runtime equivalent for, so it is free to alias zoom.
-    ("pane", "f", "zoom"),
-    ("pane", "z", "zoom"),
-    ("pane", "c", "rename_pane"),
-    // tab — zellij binds both axes: h/k back, j/l forward.
-    ("tab", "h", "prev_tab"),
-    ("tab", "k", "prev_tab"),
-    ("tab", "j", "next_tab"),
-    ("tab", "l", "next_tab"),
-    ("tab", "tab", "last_tab"),
-    ("tab", "H", "move_tab_left"),
-    ("tab", "L", "move_tab_right"),
-    ("tab", "x", "close_tab"),
-    ("tab", "n", "new_tab"),
-    ("tab", "r", "rename_tab"),
-    ("tab", "b", "break_pane_new"),
-    ("tab", "[", "break_pane_prev"),
-    ("tab", "]", "break_pane_next"),
-    ("tab", "1", "goto_tab"),
-    ("tab", "2", "goto_tab"),
-    ("tab", "3", "goto_tab"),
-    ("tab", "4", "goto_tab"),
-    ("tab", "5", "goto_tab"),
-    ("tab", "6", "goto_tab"),
-    ("tab", "7", "goto_tab"),
-    ("tab", "8", "goto_tab"),
-    ("tab", "9", "goto_tab"),
-    // move
-    ("move", "h", "swap_left"),
-    ("move", "j", "swap_down"),
-    ("move", "k", "swap_up"),
-    ("move", "l", "swap_right"),
-    ("move", "n", "swap_forward"),
-    ("move", "tab", "swap_forward"),
-    ("move", "p", "swap_backward"),
-];
+/// The modes the binary ships with. They exist so an unconfigured popup still
+/// opens (with only the shared exits bound); every action key is the user's to
+/// choose. Config may name modes beyond these.
+pub const MODE_NAMES: &[&str] = &["pane", "tab", "move"];
 
-/// Bound in every mode, matching zellij's `shared_except` blocks. Users can
-/// rebind these per mode like any other key.
+/// The only built-in bindings: bound in every mode, matching zellij's
+/// `shared_except` blocks, so a mode is always escapable before it is
+/// configured. Users can rebind or unbind them per mode like any other key.
 pub const SHARED_EXITS: &[(&str, &str)] = &[("esc", "exit"), ("enter", "exit"), ("ctrl+c", "exit")];

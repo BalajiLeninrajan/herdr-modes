@@ -1,8 +1,13 @@
 # herdr-modes
 
-Zellij-style **sticky modes** for [herdr](https://herdr.dev). Press `prefix+p` and
-then drum `hjkl` to move between panes — no re-pressing the prefix, and no
-terminal keys consumed, so readline's `ctrl+l` / `ctrl+k` stay yours.
+Zellij-style **modes** for [herdr](https://herdr.dev). Press `prefix+p`, then a
+pane key — and with `sticky = true`, drum `hjkl` to keep moving between panes
+without re-pressing the prefix, consuming no terminal keys, so readline's
+`ctrl+l` / `ctrl+k` stay yours.
+
+Nothing but the exit keys is bound out of the box: the keymap is entirely
+[yours to define](#configuration), and [`config.example.toml`](config.example.toml)
+is a ready-made zellij-shaped one to start from.
 
 herdr's key model is tmux-shaped: one prefix plus a flat namespace of named
 actions. There is no user-definable mode. But three modes *are* already sticky —
@@ -36,7 +41,7 @@ Then add to `~/.config/herdr/config.toml`:
 
 ```toml
 [keys]
-# prefix+p is previous_tab by default; tab mode's h/k covers it.
+# prefix+p is previous_tab by default; free it up for pane mode.
 previous_tab = ""
 
 [[keys.command]]
@@ -67,53 +72,30 @@ herdr server reload-config
 
 ## Keys
 
-These are the **defaults** — every one is configurable, see
-[Configuration](#configuration). They were transcribed from a zellij config,
-**including per-key stickiness**: zellij is mixed about this, so movement keys
-stay in the mode while creation keys fall back to normal.
+Only the **exits** are bound by default: `esc`, `enter`, and `ctrl+c` leave any
+mode. Everything else you bind yourself, and every binding decides whether it
+stays in the mode (`sticky = true`) or acts once and closes it (the default).
 
-### pane mode — `prefix+p`
+[`config.example.toml`](config.example.toml) is a complete zellij-transcribed
+keymap — `hjkl` focus/swap, `x` close, `n`/`d`/`r` splits, `1`–`9` tab jumps,
+with the movement keys sticky. Copy it and edit from there.
 
-| key | action | stays in mode |
-|---|---|---|
-| `h` `j` `k` `l` | focus left/down/up/right | yes |
-| `p` | cycle focus | yes |
-| `x` | close pane | yes |
-| `d` / `r` | split down / right | no |
-| `n` | new pane | no |
-| `f` / `z` | zoom | no |
-| `c` | rename pane | no |
+The actions each mode can bind:
 
-### tab mode — `prefix+t`
+| mode | actions |
+|---|---|
+| pane | `focus_left` `focus_right` `focus_up` `focus_down` `cycle_focus` `close_pane` `split_right` `split_down` `zoom` `rename_pane` |
+| tab | `prev_tab` `next_tab` `last_tab` `goto_tab` (bind to `1`–`9`) `new_tab` `close_tab` `rename_tab` `move_tab_left` `move_tab_right` `break_pane_new` `break_pane_prev` `break_pane_next` |
+| move | `swap_left` `swap_right` `swap_up` `swap_down` `swap_forward` `swap_backward` |
+| any | `exit` |
 
-| key | action | stays in mode |
-|---|---|---|
-| `h` `k` / `j` `l` | previous / next tab | yes |
-| `tab` | last tab | yes |
-| `H` / `L` | move tab left / right | yes |
-| `x` | close tab | yes |
-| `1`–`9` | go to tab | no |
-| `n` | new tab | no |
-| `r` | rename tab | no |
-| `b` / `[` / `]` | break pane to new / prev / next tab | no |
-
-### move mode — `prefix+m`
-
-| key | action | stays in mode |
-|---|---|---|
-| `h` `j` `k` `l` | swap pane in direction | yes |
-| `n` / `tab` | swap forward | yes |
-| `p` | swap backward | yes |
-
-`esc`, `enter`, and `ctrl+c` exit any mode.
-
-Keys with no herdr equivalent are deliberately unbound: floating, pinned, and
-stacked panes, pane-frame toggling, and tab input sync. `z` is a free alias for
-zoom because zellij used it for pane frames.
+Modes are only namespaces for a keymap, so any action can be bound in any mode.
+Keys with no herdr equivalent have no action at all: floating, pinned, and
+stacked panes, pane-frame toggling, and tab input sync.
 
 ## Configuration
 
-Optional. Without a config file you get the defaults above.
+Optional, but without it only the exit keys are bound.
 
 Create `~/.config/herdr/plugins/config/herdr-modes/config.toml` — herdr makes
 that directory per plugin and passes it as `$HERDR_PLUGIN_CONFIG_DIR`. See
@@ -124,18 +106,20 @@ that directory per plugin and passes it as `$HERDR_PLUGIN_CONFIG_DIR`. See
 label = "WINDOW"          # hint-bar label
 
 [modes.pane.keys]
-w = "focus_up"                                 # add or rebind
-k = ""                                         # unbind
-x = { action = "close_pane", sticky = false }  # override stickiness
+w = "focus_up"                                # act once, then leave the mode
+k = { action = "focus_up", sticky = true }    # stay in the mode
+esc = ""                                      # unbind
 ```
 
-Overrides **merge** into the defaults, so you write only what differs, and
-`key = ""` unbinds — the same convention herdr's own config uses. To start a
-mode from scratch instead, set `defaults = false` on it.
+Overrides **merge**, so you write only what differs, and `key = ""` unbinds —
+the same convention herdr's own config uses. The exits are ordinary bindings and
+can be rebound or unbound too; `defaults = false` on a mode drops them as well,
+leaving it completely empty.
 
 The hint bar is generated from whatever bindings are active, with keys sharing
 an action collapsed together (`hjkl focus`), so it never drifts out of sync with
-the keymap. Set `hint = "..."` on a mode to write it yourself.
+the keymap. Set `hint = "..."` on a mode to write it yourself, or `hint = ""` to
+hide the bar entirely — the mode then shows nothing but its feedback line.
 
 Mode names are just strings. Adding a brand-new mode needs an `[[actions]]` and
 a `[[panes]]` entry in `herdr-plugin.toml` and a `[[keys.command]]` in herdr's
