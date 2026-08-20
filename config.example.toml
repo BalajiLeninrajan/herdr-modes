@@ -61,6 +61,29 @@ n = { action = "swap_forward", sticky = true }
 tab = { action = "swap_forward", sticky = true }
 p = { action = "swap_backward", sticky = true }
 
+# Agent mode walks herdr's agent panel. `next_attention` skips over the agents
+# that are still working and lands on the next one that is blocked on you or
+# has finished unseen — the panel's attention queue, one keystroke at a time.
+[modes.agent.keys]
+h = { action = "prev_agent", sticky = true }
+k = { action = "prev_agent", sticky = true }
+j = { action = "next_agent", sticky = true }
+l = { action = "next_agent", sticky = true }
+p = { action = "prev_agent", sticky = true }
+n = { action = "next_agent", sticky = true }
+tab = { action = "last_agent", sticky = true }
+a = { action = "next_attention", sticky = true }
+A = { action = "prev_attention", sticky = true }
+1 = "goto_agent"
+2 = "goto_agent"
+3 = "goto_agent"
+4 = "goto_agent"
+5 = "goto_agent"
+6 = "goto_agent"
+7 = "goto_agent"
+8 = "goto_agent"
+9 = "goto_agent"
+
 # Overrides merge, so you only write what differs from a previous layer:
 # [modes.pane.keys]
 # w = "focus_up"                                 # add or rebind
@@ -84,6 +107,8 @@ p = { action = "swap_backward", sticky = true }
 #        close_tab rename_tab  move_tab_left move_tab_right
 #        break_pane_new break_pane_prev break_pane_next
 # move:  swap_left swap_right swap_up swap_down  swap_forward swap_backward
+# agent: prev_agent next_agent last_agent  goto_agent (bind to 1-9)
+#        next_attention prev_attention
 # any:   exit
 #
 # Every action leaves the mode after one keystroke; `sticky = true` keeps the

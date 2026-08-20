@@ -55,12 +55,20 @@ pub enum Action {
     Swap(Dir),
     SwapCycle(bool),
 
+    PrevAgent,
+    NextAgent,
+    LastAgent,
+    GotoAgent(usize),
+    /// Step to the next agent that wants you: `blocked` or `done`.
+    NextAttention,
+    PrevAttention,
+
     Quit,
 }
 
 impl Action {
-    /// Parse a config action name. `key` is needed because `goto_tab` takes its
-    /// tab number from the key it is bound to.
+    /// Parse a config action name. `key` is needed because the `goto_*` actions
+    /// take their index from the key they are bound to.
     pub fn parse(name: &str, key: &KeySpec) -> Result<Action, String> {
         let a = match name {
             "focus_left" => Action::Focus(Dir::Left),
@@ -85,12 +93,7 @@ impl Action {
             "break_pane_new" => Action::BreakPane(BreakTarget::NewTab),
             "break_pane_prev" => Action::BreakPane(BreakTarget::PrevTab),
             "break_pane_next" => Action::BreakPane(BreakTarget::NextTab),
-            "goto_tab" => {
-                let Key::Char(c @ '1'..='9') = key.key else {
-                    return Err("goto_tab must be bound to a digit 1-9".into());
-                };
-                Action::GotoTab(c.to_digit(10).unwrap() as usize)
-            }
+            "goto_tab" => Action::GotoTab(digit(name, key)?),
 
             "swap_left" => Action::Swap(Dir::Left),
             "swap_right" => Action::Swap(Dir::Right),
@@ -98,6 +101,13 @@ impl Action {
             "swap_down" => Action::Swap(Dir::Down),
             "swap_forward" => Action::SwapCycle(true),
             "swap_backward" => Action::SwapCycle(false),
+
+            "prev_agent" => Action::PrevAgent,
+            "next_agent" => Action::NextAgent,
+            "last_agent" => Action::LastAgent,
+            "goto_agent" => Action::GotoAgent(digit(name, key)?),
+            "next_attention" => Action::NextAttention,
+            "prev_attention" => Action::PrevAttention,
 
             "exit" => Action::Quit,
             other => return Err(format!("unknown action `{other}`")),
@@ -124,9 +134,22 @@ impl Action {
             Action::MoveTab(_) => "move",
             Action::BreakPane(_) => "break",
             Action::Swap(_) | Action::SwapCycle(_) => "swap",
+            Action::PrevAgent | Action::NextAgent => "agent",
+            Action::LastAgent => "last",
+            Action::GotoAgent(_) => "goto",
+            Action::NextAttention | Action::PrevAttention => "attention",
             Action::Quit => "exit",
         }
     }
+}
+
+/// `goto_tab` and `goto_agent` take their index from the key they are bound to,
+/// so `1 = "goto_tab"` reads the way the keymap looks.
+fn digit(name: &str, key: &KeySpec) -> Result<usize, String> {
+    let Key::Char(c @ '1'..='9') = key.key else {
+        return Err(format!("{name} must be bound to a digit 1-9"));
+    };
+    Ok(c.to_digit(10).unwrap() as usize)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -275,7 +298,7 @@ impl Mode {
 /// The modes the binary ships with. They exist so an unconfigured popup still
 /// opens (with only the shared exits bound); every action key is the user's to
 /// choose. Config may name modes beyond these.
-pub const MODE_NAMES: &[&str] = &["pane", "tab", "move"];
+pub const MODE_NAMES: &[&str] = &["pane", "tab", "move", "agent"];
 
 /// The only built-in bindings: bound in every mode, matching zellij's
 /// `shared_except` blocks, so a mode is always escapable before it is
