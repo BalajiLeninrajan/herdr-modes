@@ -2,46 +2,51 @@
 //!
 //! `open <mode>` runs as a plugin action and opens the modal popup.
 //! `run <mode>` runs inside that popup and owns the key loop.
+//! `check` validates the config and prints the resolved keymaps.
 //!
 //! Actions run detached without a TTY, so the action -> pane hop is required;
 //! it costs one round trip on mode entry only.
 
 mod client;
+mod config;
 mod hint;
 mod keymap;
 mod modes;
 
 use client::Client;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use crossterm::{cursor, execute};
-use keymap::{Action, Mode};
+use keymap::Action;
 use serde_json::{Value, json};
 use std::io::{Stdout, stdout};
 use std::process::ExitCode;
 
 const POPUP_WIDTH: &str = "90%";
-/// Heights 3 and 4 both yield two interior rows; 4 is used so the value is
-/// explicit rather than relying on the server clamping it up.
+/// herdr's minimum popup height; less the border, exactly two interior rows.
 const POPUP_HEIGHT: u64 = 4;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     let sub = args.get(1).map(String::as_str);
-    let mode_arg = args.get(2).map(String::as_str);
 
-    let Some(mode) = mode_arg.and_then(Mode::parse) else {
-        eprintln!("usage: herdr-modes <open|run> <pane|tab|move>");
+    match sub {
+        Some("check") => return check(),
+        Some("open") | Some("run") => {}
+        _ => {
+            eprintln!("usage: herdr-modes <open|run> <mode> | herdr-modes check");
+            return ExitCode::from(2);
+        }
+    }
+
+    let Some(mode_name) = args.get(2) else {
+        eprintln!("usage: herdr-modes <open|run> <mode>");
         return ExitCode::from(2);
     };
 
     let result = match sub {
-        Some("open") => open(mode_arg.unwrap()),
-        Some("run") => run(mode),
-        _ => {
-            eprintln!("usage: herdr-modes <open|run> <pane|tab|move>");
-            return ExitCode::from(2);
-        }
+        Some("open") => open(mode_name),
+        _ => run(mode_name),
     };
 
     match result {
@@ -50,6 +55,40 @@ fn main() -> ExitCode {
             eprintln!("herdr-modes: {e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+/// Validate config and print the resolved keymaps, so a typo is findable
+/// without opening a popup and pressing keys.
+fn check() -> ExitCode {
+    let (modes, warnings) = config::load();
+    match config::config_path() {
+        Some(p) if p.exists() => println!("config: {}", p.display()),
+        Some(p) => println!("config: {} (not present, only the exits are bound)", p.display()),
+        None => println!("config: <unresolved>"),
+    }
+    println!();
+
+    let mut names: Vec<&String> = modes.keys().collect();
+    names.sort();
+    for name in names {
+        let mode = &modes[name];
+        println!("[{}]  label={}  {} bindings", name, mode.label, mode.keys.len());
+        match mode.hint_text() {
+            Some(h) => println!("  {h}"),
+            None => println!("  (hint bar hidden)"),
+        }
+    }
+
+    if warnings.is_empty() {
+        println!("\nok");
+        ExitCode::SUCCESS
+    } else {
+        println!("\n{} problem(s):", warnings.len());
+        for w in &warnings {
+            println!("  - {w}");
+        }
+        ExitCode::FAILURE
     }
 }
 
@@ -86,7 +125,12 @@ impl Drop for RawGuard {
     }
 }
 
-fn run(mode: Mode) -> Result<(), client::Error> {
+fn run(mode_name: &str) -> Result<(), client::Error> {
+    let (modes, warnings) = config::load();
+    let Some(mode) = modes.get(mode_name) else {
+        return Err(client::Error::Protocol(format!("no mode named `{mode_name}`")));
+    };
+
     let ctx: Value = std::env::var("HERDR_PLUGIN_CONTEXT_JSON")
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
@@ -103,10 +147,18 @@ fn run(mode: Mode) -> Result<(), client::Error> {
     enable_raw_mode()?;
     let _guard = RawGuard;
     let mut out = stdout();
-    let mut feedback = String::new();
+    let hint_text = mode.hint_text();
+
+    // Surface config problems where they will actually be seen, then let the
+    // mode carry on with whatever did parse.
+    let mut feedback = match warnings.len() {
+        0 => String::new(),
+        1 => format!("config: {}", warnings[0]),
+        n => format!("config: {} ({} more)", warnings[0], n - 1),
+    };
 
     loop {
-        hint::render(&mut out, mode, &feedback)?;
+        hint::render(&mut out, &mode.label, hint_text.as_deref(), &feedback)?;
 
         let Event::Key(key) = event::read()? else {
             continue;
@@ -117,8 +169,11 @@ fn run(mode: Mode) -> Result<(), client::Error> {
             continue;
         }
 
-        let Some(binding) = keymap::lookup(mode, &key) else {
-            feedback = format!("unbound: {}", describe(&key));
+        let Some(binding) = mode.lookup(&key) else {
+            feedback = match keymap::KeySpec::from_event(&key) {
+                Some(s) => format!("unbound: {s}"),
+                None => "unbound".into(),
+            };
             continue;
         };
         if matches!(binding.action, Action::Quit) {
@@ -158,12 +213,5 @@ fn prompt(out: &mut Stdout, label: &str) -> Option<String> {
             KeyCode::Char(c) => buf.push(c),
             _ => {}
         }
-    }
-}
-
-fn describe(key: &KeyEvent) -> String {
-    match key.code {
-        KeyCode::Char(c) => c.to_string(),
-        other => format!("{other:?}").to_lowercase(),
     }
 }

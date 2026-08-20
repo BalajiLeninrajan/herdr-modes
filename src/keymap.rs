@@ -1,48 +1,11 @@
-//! Key tables, transcribed from ~/.config/zellij/config.kdl.
+//! Actions, key specs, and the resolved keymap a mode runs on.
 //!
-//! Stickiness is per-key, not per-mode, because the zellij config is mixed:
-//! movement keys stay in the mode while creation keys fall back to normal.
-//! `sticky: false` means the action runs and the mode exits.
+//! Everything here is data. The keymap itself comes from the user's config;
+//! the only bindings this file contributes are the exits, so a mode is always
+//! escapable before it is configured.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Mode {
-    Pane,
-    Tab,
-    Move,
-}
-
-impl Mode {
-    pub fn parse(s: &str) -> Option<Mode> {
-        match s {
-            "pane" => Some(Mode::Pane),
-            "tab" => Some(Mode::Tab),
-            "move" => Some(Mode::Move),
-            _ => None,
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Mode::Pane => "PANE",
-            Mode::Tab => "TAB",
-            Mode::Move => "MOVE",
-        }
-    }
-
-    pub fn hint(self) -> &'static str {
-        match self {
-            Mode::Pane => {
-                "hjkl focus  p cycle  x close  d/r split  n new  f/z zoom  c rename  esc exit"
-            }
-            Mode::Tab => {
-                "hjkl/1-9 switch  tab last  H/L move  n new  x close  r rename  b/[/] break  esc exit"
-            }
-            Mode::Move => "hjkl swap  n/tab forward  p backward  esc exit",
-        }
-    }
-}
+use std::fmt;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Dir {
@@ -75,7 +38,6 @@ pub enum Action {
     Focus(Dir),
     CycleFocus,
     ClosePane,
-    /// SplitDirection is only right|down, matching zellij's `d` and `r`.
     Split(&'static str),
     Zoom,
     RenamePane,
@@ -96,87 +58,226 @@ pub enum Action {
     Quit,
 }
 
+impl Action {
+    /// Parse a config action name. `key` is needed because `goto_tab` takes its
+    /// tab number from the key it is bound to.
+    pub fn parse(name: &str, key: &KeySpec) -> Result<Action, String> {
+        let a = match name {
+            "focus_left" => Action::Focus(Dir::Left),
+            "focus_right" => Action::Focus(Dir::Right),
+            "focus_up" => Action::Focus(Dir::Up),
+            "focus_down" => Action::Focus(Dir::Down),
+            "cycle_focus" => Action::CycleFocus,
+            "close_pane" => Action::ClosePane,
+            "split_right" => Action::Split("right"),
+            "split_down" => Action::Split("down"),
+            "zoom" => Action::Zoom,
+            "rename_pane" => Action::RenamePane,
+
+            "prev_tab" => Action::PrevTab,
+            "next_tab" => Action::NextTab,
+            "last_tab" => Action::LastTab,
+            "new_tab" => Action::NewTab,
+            "close_tab" => Action::CloseTab,
+            "rename_tab" => Action::RenameTab,
+            "move_tab_left" => Action::MoveTab(-1),
+            "move_tab_right" => Action::MoveTab(1),
+            "break_pane_new" => Action::BreakPane(BreakTarget::NewTab),
+            "break_pane_prev" => Action::BreakPane(BreakTarget::PrevTab),
+            "break_pane_next" => Action::BreakPane(BreakTarget::NextTab),
+            "goto_tab" => {
+                let Key::Char(c @ '1'..='9') = key.key else {
+                    return Err("goto_tab must be bound to a digit 1-9".into());
+                };
+                Action::GotoTab(c.to_digit(10).unwrap() as usize)
+            }
+
+            "swap_left" => Action::Swap(Dir::Left),
+            "swap_right" => Action::Swap(Dir::Right),
+            "swap_up" => Action::Swap(Dir::Up),
+            "swap_down" => Action::Swap(Dir::Down),
+            "swap_forward" => Action::SwapCycle(true),
+            "swap_backward" => Action::SwapCycle(false),
+
+            "exit" => Action::Quit,
+            other => return Err(format!("unknown action `{other}`")),
+        };
+        Ok(a)
+    }
+
+    /// Short label for the auto-generated hint bar. Directional variants share
+    /// a label so their keys collapse into one group ("hjkl focus").
+    pub fn hint_label(self) -> &'static str {
+        match self {
+            Action::Focus(_) => "focus",
+            Action::CycleFocus => "cycle",
+            Action::ClosePane => "close",
+            Action::Split(_) => "split",
+            Action::Zoom => "zoom",
+            Action::RenamePane => "rename",
+            Action::PrevTab | Action::NextTab => "switch",
+            Action::LastTab => "last",
+            Action::GotoTab(_) => "goto",
+            Action::NewTab => "new",
+            Action::CloseTab => "close",
+            Action::RenameTab => "rename",
+            Action::MoveTab(_) => "move",
+            Action::BreakPane(_) => "break",
+            Action::Swap(_) | Action::SwapCycle(_) => "swap",
+            Action::Quit => "exit",
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Key {
+    Char(char),
+    Tab,
+    Enter,
+    Esc,
+    Backspace,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct KeySpec {
+    pub ctrl: bool,
+    pub key: Key,
+}
+
+impl KeySpec {
+    /// Parse a config key string: `h`, `H`, `1`, `tab`, `esc`, `enter`, `ctrl+c`.
+    pub fn parse(s: &str) -> Result<KeySpec, String> {
+        let (ctrl, rest) = match s.strip_prefix("ctrl+") {
+            Some(r) => (true, r),
+            None => (false, s),
+        };
+        let key = match rest {
+            "tab" => Key::Tab,
+            "enter" | "return" => Key::Enter,
+            "esc" | "escape" => Key::Esc,
+            "backspace" => Key::Backspace,
+            "space" => Key::Char(' '),
+            other => {
+                let mut chars = other.chars();
+                match (chars.next(), chars.next()) {
+                    (Some(c), None) => Key::Char(c),
+                    _ => return Err(format!("unrecognised key `{s}`")),
+                }
+            }
+        };
+        Ok(KeySpec { ctrl, key })
+    }
+
+    /// Build a spec from a live key event so it can be looked up in the table.
+    pub fn from_event(ev: &KeyEvent) -> Option<KeySpec> {
+        let ctrl = ev.modifiers.contains(KeyModifiers::CONTROL);
+        let key = match ev.code {
+            // Ctrl chords arrive uppercase on some terminals; normalise so
+            // `ctrl+c` in config matches regardless.
+            KeyCode::Char(c) if ctrl => Key::Char(c.to_ascii_lowercase()),
+            KeyCode::Char(c) => Key::Char(c),
+            KeyCode::Tab | KeyCode::BackTab => Key::Tab,
+            KeyCode::Enter => Key::Enter,
+            KeyCode::Esc => Key::Esc,
+            KeyCode::Backspace => Key::Backspace,
+            _ => return None,
+        };
+        Some(KeySpec { ctrl, key })
+    }
+}
+
+impl fmt::Display for KeySpec {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.ctrl {
+            write!(f, "ctrl+")?;
+        }
+        match self.key {
+            Key::Char(' ') => write!(f, "space"),
+            Key::Char(c) => write!(f, "{c}"),
+            Key::Tab => write!(f, "tab"),
+            Key::Enter => write!(f, "enter"),
+            Key::Esc => write!(f, "esc"),
+            Key::Backspace => write!(f, "backspace"),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
 pub struct Binding {
     pub action: Action,
     pub sticky: bool,
 }
 
-const fn stay(action: Action) -> Option<Binding> {
-    Some(Binding { action, sticky: true })
+pub struct Mode {
+    pub label: String,
+    pub hint: Option<String>,
+    /// Kept in insertion order, so the generated hint reads the same way twice.
+    /// A handful of entries per mode, so a scan beats a map.
+    pub keys: Vec<(KeySpec, Binding)>,
 }
 
-const fn exit(action: Action) -> Option<Binding> {
-    Some(Binding { action, sticky: false })
-}
-
-pub fn lookup(mode: Mode, ev: &KeyEvent) -> Option<Binding> {
-    // Shared exits, matching zellij's `shared_except` blocks. Checked before
-    // anything else so ctrl+c never collides with pane mode's `c`.
-    if ev.modifiers.contains(KeyModifiers::CONTROL) {
-        return match ev.code {
-            KeyCode::Char('c') => exit(Action::Quit),
-            _ => None,
-        };
-    }
-    if matches!(ev.code, KeyCode::Esc | KeyCode::Enter) {
-        return exit(Action::Quit);
+impl Mode {
+    pub fn lookup(&self, ev: &KeyEvent) -> Option<Binding> {
+        let spec = KeySpec::from_event(ev)?;
+        self.keys.iter().find(|(s, _)| *s == spec).map(|(_, b)| *b)
     }
 
-    match mode {
-        Mode::Pane => pane(ev),
-        Mode::Tab => tab(ev),
-        Mode::Move => move_(ev),
-    }
-}
-
-fn pane(ev: &KeyEvent) -> Option<Binding> {
-    match ev.code {
-        KeyCode::Char('h') => stay(Action::Focus(Dir::Left)),
-        KeyCode::Char('j') => stay(Action::Focus(Dir::Down)),
-        KeyCode::Char('k') => stay(Action::Focus(Dir::Up)),
-        KeyCode::Char('l') => stay(Action::Focus(Dir::Right)),
-        KeyCode::Char('p') => stay(Action::CycleFocus),
-        KeyCode::Char('x') => stay(Action::ClosePane),
-        KeyCode::Char('d') => exit(Action::Split("down")),
-        KeyCode::Char('r') => exit(Action::Split("right")),
-        KeyCode::Char('n') => exit(Action::Split("right")),
-        // `f` is zellij's ToggleFocusFullscreen. `z` was TogglePaneFrames,
-        // which herdr has no runtime equivalent for, so it is a free alias.
-        KeyCode::Char('f') | KeyCode::Char('z') => exit(Action::Zoom),
-        KeyCode::Char('c') => exit(Action::RenamePane),
-        _ => None,
-    }
-}
-
-fn tab(ev: &KeyEvent) -> Option<Binding> {
-    match ev.code {
-        // zellij binds both axes: h/k go back, j/l go forward.
-        KeyCode::Char('h') | KeyCode::Char('k') => stay(Action::PrevTab),
-        KeyCode::Char('j') | KeyCode::Char('l') => stay(Action::NextTab),
-        KeyCode::Tab => stay(Action::LastTab),
-        KeyCode::Char('H') => stay(Action::MoveTab(-1)),
-        KeyCode::Char('L') => stay(Action::MoveTab(1)),
-        KeyCode::Char('x') => stay(Action::CloseTab),
-        KeyCode::Char('n') => exit(Action::NewTab),
-        KeyCode::Char('r') => exit(Action::RenameTab),
-        KeyCode::Char('b') => exit(Action::BreakPane(BreakTarget::NewTab)),
-        KeyCode::Char('[') => exit(Action::BreakPane(BreakTarget::PrevTab)),
-        KeyCode::Char(']') => exit(Action::BreakPane(BreakTarget::NextTab)),
-        KeyCode::Char(c @ '1'..='9') => {
-            exit(Action::GotoTab(c.to_digit(10).unwrap() as usize))
+    /// Bind a key, replacing whatever it was bound to.
+    pub fn bind(&mut self, spec: KeySpec, binding: Binding) {
+        match self.keys.iter_mut().find(|(s, _)| *s == spec) {
+            Some((_, b)) => *b = binding,
+            None => self.keys.push((spec, binding)),
         }
-        _ => None,
+    }
+
+    pub fn unbind(&mut self, spec: KeySpec) {
+        self.keys.retain(|(s, _)| *s != spec);
+    }
+
+    /// Hint bar text: the configured string, or one generated from the
+    /// bindings with keys sharing a label collapsed together. `hint = ""`
+    /// hides the bar entirely, so this returns `None`.
+    pub fn hint_text(&self) -> Option<String> {
+        if let Some(h) = &self.hint {
+            return (!h.is_empty()).then(|| h.clone());
+        }
+        let mut groups: Vec<(&'static str, String)> = Vec::new();
+        for (spec, b) in &self.keys {
+            let label = b.action.hint_label();
+            match groups.iter_mut().find(|(l, _)| *l == label) {
+                Some((_, keys)) => {
+                    let k = spec.to_string();
+                    // Single alphanumeric keys run together (hjkl); punctuation
+                    // and multi-character names stay separated.
+                    if k.chars().count() == 1
+                        && k.chars().all(|c| c.is_alphanumeric())
+                        && keys.chars().all(|c| c.is_alphanumeric())
+                    {
+                        keys.push_str(&k);
+                    } else {
+                        keys.push('/');
+                        keys.push_str(&k);
+                    }
+                }
+                None => groups.push((label, spec.to_string())),
+            }
+        }
+        Some(
+            groups
+                .into_iter()
+                .map(|(label, keys)| format!("{keys} {label}"))
+                .collect::<Vec<_>>()
+                .join("  "),
+        )
     }
 }
 
-fn move_(ev: &KeyEvent) -> Option<Binding> {
-    match ev.code {
-        KeyCode::Char('h') => stay(Action::Swap(Dir::Left)),
-        KeyCode::Char('j') => stay(Action::Swap(Dir::Down)),
-        KeyCode::Char('k') => stay(Action::Swap(Dir::Up)),
-        KeyCode::Char('l') => stay(Action::Swap(Dir::Right)),
-        KeyCode::Char('n') | KeyCode::Tab => stay(Action::SwapCycle(true)),
-        KeyCode::Char('p') => stay(Action::SwapCycle(false)),
-        _ => None,
-    }
-}
+/// The modes the binary ships with. They exist so an unconfigured popup still
+/// opens (with only the shared exits bound); every action key is the user's to
+/// choose. Config may name modes beyond these.
+pub const MODE_NAMES: &[&str] = &["pane", "tab", "move"];
+
+/// The only built-in bindings: bound in every mode, matching zellij's
+/// `shared_except` blocks, so a mode is always escapable before it is
+/// configured. Users can rebind or unbind them per mode like any other key.
+pub const SHARED_EXITS: &[(&str, &str)] = &[("esc", "exit"), ("enter", "exit"), ("ctrl+c", "exit")];

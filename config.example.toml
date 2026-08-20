@@ -1,0 +1,94 @@
+# herdr-modes configuration
+# Copy to: ~/.config/herdr/plugins/config/herdr-modes/config.toml
+# Validate with: herdr-modes check
+#
+# Nothing is bound out of the box except the shared exits (esc, enter, ctrl+c),
+# so the keymap below is yours to keep, trim, or replace. It is the zellij set
+# the plugin used to ship as defaults, with movement keys made sticky.
+
+[modes.pane]
+# label = "PANE"          # shown in the hint bar; defaults to the mode name
+# hint  = "custom text"   # defaults to a legend generated from the bindings
+#                         # hint = "" hides the hint bar entirely
+
+[modes.pane.keys]
+h = { action = "focus_left", sticky = true }
+j = { action = "focus_down", sticky = true }
+k = { action = "focus_up", sticky = true }
+l = { action = "focus_right", sticky = true }
+p = { action = "cycle_focus", sticky = true }
+x = { action = "close_pane", sticky = true }
+d = "split_down"
+r = "split_right"
+n = "split_right"
+# `f` is zellij's fullscreen; `z` was pane frames, which herdr has no runtime
+# equivalent for, so it is free to alias zoom.
+f = "zoom"
+z = "zoom"
+c = "rename_pane"
+
+[modes.tab.keys]
+# zellij binds both axes: h/k back, j/l forward.
+h = { action = "prev_tab", sticky = true }
+k = { action = "prev_tab", sticky = true }
+j = { action = "next_tab", sticky = true }
+l = { action = "next_tab", sticky = true }
+tab = { action = "last_tab", sticky = true }
+H = { action = "move_tab_left", sticky = true }
+L = { action = "move_tab_right", sticky = true }
+x = { action = "close_tab", sticky = true }
+n = "new_tab"
+r = "rename_tab"
+b = "break_pane_new"
+"[" = "break_pane_prev"
+"]" = "break_pane_next"
+1 = "goto_tab"
+2 = "goto_tab"
+3 = "goto_tab"
+4 = "goto_tab"
+5 = "goto_tab"
+6 = "goto_tab"
+7 = "goto_tab"
+8 = "goto_tab"
+9 = "goto_tab"
+
+[modes.move.keys]
+h = { action = "swap_left", sticky = true }
+j = { action = "swap_down", sticky = true }
+k = { action = "swap_up", sticky = true }
+l = { action = "swap_right", sticky = true }
+n = { action = "swap_forward", sticky = true }
+tab = { action = "swap_forward", sticky = true }
+p = { action = "swap_backward", sticky = true }
+
+# Overrides merge, so you only write what differs from a previous layer:
+# [modes.pane.keys]
+# w = "focus_up"                                 # add or rebind
+# esc = ""                                       # unbind a shared exit
+# x = { action = "close_pane", sticky = false }  # act once, then leave the mode
+
+# Drop the shared exits too and start from a truly empty mode:
+# [modes.pane]
+# defaults = false
+
+# Modes are just names. Adding a new one also needs an [[actions]] and a
+# [[panes]] entry in herdr-plugin.toml, plus a [[keys.command]] in herdr's
+# config.toml to open it.
+# [modes.zap.keys]
+# z = "zoom"
+
+# ─── actions ───────────────────────────────────────────────────────────────
+# pane:  focus_left focus_right focus_up focus_down  cycle_focus  close_pane
+#        split_right split_down  zoom  rename_pane
+# tab:   prev_tab next_tab last_tab  goto_tab (bind to 1-9)  new_tab
+#        close_tab rename_tab  move_tab_left move_tab_right
+#        break_pane_new break_pane_prev break_pane_next
+# move:  swap_left swap_right swap_up swap_down  swap_forward swap_backward
+# any:   exit
+#
+# Every action leaves the mode after one keystroke; `sticky = true` keeps the
+# mode open so the key can be drummed.
+#
+# ─── keys ──────────────────────────────────────────────────────────────────
+# single characters ("h", "H", "1", "["), named keys ("tab", "enter"/"return",
+# "esc"/"escape", "backspace", "space"), and ctrl chords ("ctrl+c").
