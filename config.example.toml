@@ -84,6 +84,31 @@ A = { action = "prev_attention", sticky = true }
 8 = "goto_agent"
 9 = "goto_agent"
 
+# Space mode walks the sidebar the same way, and every step is a real focus:
+# the space switches under the popup as you drum, so what you see is the space
+# you would land on. `esc` is rebound to `cancel` here, which puts focus back
+# where the mode opened — browse freely, `enter` keeps where you landed.
+[modes.space.keys]
+h = { action = "prev_space", sticky = true }
+k = { action = "prev_space", sticky = true }
+j = { action = "next_space", sticky = true }
+l = { action = "next_space", sticky = true }
+p = { action = "prev_space", sticky = true }
+n = { action = "next_space", sticky = true }
+tab = { action = "last_space", sticky = true }
+a = { action = "next_space_attention", sticky = true }
+A = { action = "prev_space_attention", sticky = true }
+esc = "cancel"
+1 = "goto_space"
+2 = "goto_space"
+3 = "goto_space"
+4 = "goto_space"
+5 = "goto_space"
+6 = "goto_space"
+7 = "goto_space"
+8 = "goto_space"
+9 = "goto_space"
+
 # Overrides merge, so you only write what differs from a previous layer:
 # [modes.pane.keys]
 # w = "focus_up"                                 # add or rebind
@@ -109,10 +134,13 @@ A = { action = "prev_attention", sticky = true }
 # move:  swap_left swap_right swap_up swap_down  swap_forward swap_backward
 # agent: prev_agent next_agent last_agent  goto_agent (bind to 1-9)
 #        next_attention prev_attention
-# any:   exit
+# space: prev_space next_space last_space  goto_space (bind to 1-9)
+#        next_space_attention prev_space_attention
+# any:   exit  cancel
 #
 # Every action leaves the mode after one keystroke; `sticky = true` keeps the
-# mode open so the key can be drummed.
+# mode open so the key can be drummed. `exit` keeps wherever the mode left
+# focus; `cancel` returns it to where the mode opened.
 #
 # ─── keys ──────────────────────────────────────────────────────────────────
 # single characters ("h", "H", "1", "["), named keys ("tab", "enter"/"return",

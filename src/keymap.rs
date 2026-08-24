@@ -63,6 +63,17 @@ pub enum Action {
     NextAttention,
     PrevAttention,
 
+    PrevSpace,
+    NextSpace,
+    LastSpace,
+    GotoSpace(usize),
+    /// Step to the next space whose agents want you: `blocked` or `done`.
+    NextSpaceAttention,
+    PrevSpaceAttention,
+
+    /// Leave, putting focus back where the mode opened. Every action here
+    /// moves focus for real, so a browse needs a way to be taken back.
+    Cancel,
     Quit,
 }
 
@@ -109,6 +120,14 @@ impl Action {
             "next_attention" => Action::NextAttention,
             "prev_attention" => Action::PrevAttention,
 
+            "prev_space" => Action::PrevSpace,
+            "next_space" => Action::NextSpace,
+            "last_space" => Action::LastSpace,
+            "goto_space" => Action::GotoSpace(digit(name, key)?),
+            "next_space_attention" => Action::NextSpaceAttention,
+            "prev_space_attention" => Action::PrevSpaceAttention,
+
+            "cancel" => Action::Cancel,
             "exit" => Action::Quit,
             other => return Err(format!("unknown action `{other}`")),
         };
@@ -138,13 +157,18 @@ impl Action {
             Action::LastAgent => "last",
             Action::GotoAgent(_) => "goto",
             Action::NextAttention | Action::PrevAttention => "attention",
+            Action::PrevSpace | Action::NextSpace => "space",
+            Action::LastSpace => "last",
+            Action::GotoSpace(_) => "goto",
+            Action::NextSpaceAttention | Action::PrevSpaceAttention => "attention",
+            Action::Cancel => "cancel",
             Action::Quit => "exit",
         }
     }
 }
 
-/// `goto_tab` and `goto_agent` take their index from the key they are bound to,
-/// so `1 = "goto_tab"` reads the way the keymap looks.
+/// The `goto_*` actions take their index from the key they are bound to, so
+/// `1 = "goto_tab"` reads the way the keymap looks.
 fn digit(name: &str, key: &KeySpec) -> Result<usize, String> {
     let Key::Char(c @ '1'..='9') = key.key else {
         return Err(format!("{name} must be bound to a digit 1-9"));
@@ -298,7 +322,7 @@ impl Mode {
 /// The modes the binary ships with. They exist so an unconfigured popup still
 /// opens (with only the shared exits bound); every action key is the user's to
 /// choose. Config may name modes beyond these.
-pub const MODE_NAMES: &[&str] = &["pane", "tab", "move", "agent"];
+pub const MODE_NAMES: &[&str] = &["pane", "tab", "move", "agent", "space"];
 
 /// The only built-in bindings: bound in every mode, matching zellij's
 /// `shared_except` blocks, so a mode is always escapable before it is

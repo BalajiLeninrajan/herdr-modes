@@ -185,7 +185,9 @@ fn run(mode_name: &str) -> Result<(), client::Error> {
             Err(e) => format!("error: {e}"),
         };
 
-        if !binding.sticky {
+        // `cancel` has already put focus back; staying open would only invite
+        // another move from a place the user just said they were done with.
+        if matches!(binding.action, Action::Cancel) || !binding.sticky {
             break;
         }
     }

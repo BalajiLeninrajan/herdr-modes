@@ -22,6 +22,24 @@ impl Agent {
     }
 }
 
+/// One row of herdr's space sidebar, in `workspace.list` order — the same
+/// order the sidebar draws and `number` counts.
+struct Space {
+    id: String,
+    label: String,
+    /// The space's rolled-up agent status.
+    status: String,
+    focused: bool,
+}
+
+impl Space {
+    /// A space wants you when its agents do: `blocked` is waiting on an answer,
+    /// `done` is finished work you have not looked at.
+    fn wants_attention(&self) -> bool {
+        self.status == "blocked" || self.status == "done"
+    }
+}
+
 pub struct Session {
     pub client: Client,
     pub workspace_id: String,
@@ -31,17 +49,25 @@ pub struct Session {
     prev_tab_id: Option<String>,
     /// The agent pane focus came from, for `last_agent`.
     prev_agent_id: Option<String>,
+    /// The space focus came from, for `last_space`.
+    prev_workspace_id: Option<String>,
+    /// Where the mode opened, for `cancel`.
+    origin_workspace_id: String,
+    origin_pane_id: String,
 }
 
 impl Session {
     pub fn new(client: Client, workspace_id: String, tab_id: String, pane_id: String) -> Self {
         Session {
             client,
+            origin_workspace_id: workspace_id.clone(),
+            origin_pane_id: pane_id.clone(),
             workspace_id,
             tab_id,
             pane_id,
             prev_tab_id: None,
             prev_agent_id: None,
+            prev_workspace_id: None,
         }
     }
 
@@ -139,6 +165,14 @@ impl Session {
             Action::NextAttention => self.step_attention(1),
             Action::PrevAttention => self.step_attention(-1),
 
+            Action::PrevSpace => self.step_space(-1),
+            Action::NextSpace => self.step_space(1),
+            Action::LastSpace => self.last_space(),
+            Action::GotoSpace(n) => self.goto_space(n),
+            Action::NextSpaceAttention => self.step_space_attention(1),
+            Action::PrevSpaceAttention => self.step_space_attention(-1),
+
+            Action::Cancel => self.cancel(),
             Action::Quit => Ok(String::new()),
         }
     }
@@ -419,5 +453,117 @@ impl Session {
             Some(i) => self.focus_agent(&agents, i),
             None => Ok("nothing waiting".into()),
         }
+    }
+
+    fn spaces(&mut self) -> Result<Vec<Space>, Error> {
+        let r = self.client.call("workspace.list", json!({}))?;
+        Ok(r["workspaces"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|w| {
+                        Some(Space {
+                            id: w["workspace_id"].as_str()?.to_string(),
+                            label: w["label"].as_str().unwrap_or("space").to_string(),
+                            status: w["agent_status"].as_str().unwrap_or("unknown").to_string(),
+                            focused: w["focused"].as_bool().unwrap_or(false),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    /// Where the sidebar's cursor sits. `focused` comes from the server, so it
+    /// stays right even if a space was created or closed since the mode opened.
+    fn space_at_focus(&self, spaces: &[Space]) -> Option<usize> {
+        spaces
+            .iter()
+            .position(|s| s.focused)
+            .or_else(|| spaces.iter().position(|s| s.id == self.workspace_id))
+    }
+
+    /// Focusing *is* the preview: the space really switches underneath, and the
+    /// popup keeps the keystrokes because it is session-modal. `cancel` is what
+    /// makes that safe to do while only browsing.
+    fn focus_space(&mut self, spaces: &[Space], index: usize) -> Result<String, Error> {
+        let target = &spaces[index];
+        let n = spaces.len();
+        let line = format!("{}/{n} {} \u{b7} {}", index + 1, target.label, target.status);
+        if target.id == self.workspace_id {
+            return Ok(format!("{line} \u{b7} already here"));
+        }
+        let id = target.id.clone();
+        self.client.call("workspace.focus", json!({ "workspace_id": id.clone() }))?;
+        self.prev_workspace_id = Some(std::mem::replace(&mut self.workspace_id, id));
+        // The new space brings its own active tab and pane with it.
+        self.refresh()?;
+        Ok(line)
+    }
+
+    fn step_space(&mut self, delta: i64) -> Result<String, Error> {
+        let spaces = self.spaces()?;
+        if spaces.len() < 2 {
+            return Ok("only one space".into());
+        }
+        let n = spaces.len() as i64;
+        let cur = self.space_at_focus(&spaces).unwrap_or(0) as i64;
+        let next = ((cur + delta) % n + n) % n;
+        self.focus_space(&spaces, next as usize)
+    }
+
+    fn goto_space(&mut self, n: usize) -> Result<String, Error> {
+        let spaces = self.spaces()?;
+        if n > spaces.len() {
+            return Ok(format!("no space {n}"));
+        }
+        self.focus_space(&spaces, n - 1)
+    }
+
+    fn last_space(&mut self) -> Result<String, Error> {
+        let spaces = self.spaces()?;
+        let prev = self.prev_workspace_id.clone();
+        // The space may have been closed while we were away.
+        let Some(index) = prev.and_then(|p| spaces.iter().position(|s| s.id == p)) else {
+            return Ok("no previous space".into());
+        };
+        self.focus_space(&spaces, index)
+    }
+
+    /// `step_attention` one level up: skip the spaces whose agents are all busy
+    /// or already read, and land on the next one that is waiting on you.
+    fn step_space_attention(&mut self, delta: i64) -> Result<String, Error> {
+        let spaces = self.spaces()?;
+        if spaces.is_empty() {
+            return Ok("no spaces".into());
+        }
+        let n = spaces.len() as i64;
+        // Starting off the sidebar puts the search just outside the near end,
+        // so the first step lands on that end row instead of skipping it.
+        let off_sidebar = if delta > 0 { -1 } else { n };
+        let from = self.space_at_focus(&spaces).map_or(off_sidebar, |i| i as i64);
+        let hit = (1..=n)
+            .map(|step| (((from + delta * step) % n + n) % n) as usize)
+            .find(|i| spaces[*i].wants_attention());
+        match hit {
+            Some(i) => self.focus_space(&spaces, i),
+            None => Ok("nothing waiting".into()),
+        }
+    }
+
+    /// Leaving has two meanings once navigation is live: `exit` keeps wherever
+    /// you landed, `cancel` puts you back where the mode opened.
+    fn cancel(&mut self) -> Result<String, Error> {
+        if self.pane_id == self.origin_pane_id {
+            return Ok(String::new());
+        }
+        let workspace = self.origin_workspace_id.clone();
+        let pane = self.origin_pane_id.clone();
+        self.client.call("workspace.focus", json!({ "workspace_id": workspace }))?;
+        // The pane may be gone — closed from inside the mode — and then the
+        // space it lived in is as close to where you were as there is.
+        let _ = self.client.call("pane.focus", json!({ "pane_id": pane }));
+        self.refresh()?;
+        Ok(String::new())
     }
 }
