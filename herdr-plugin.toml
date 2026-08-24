@@ -31,6 +31,12 @@ title = "Agent mode"
 contexts = ["global"]
 command = ["./target/release/herdr-modes", "open", "agent"]
 
+[[actions]]
+id = "space"
+title = "Space mode"
+contexts = ["global"]
+command = ["./target/release/herdr-modes", "open", "space"]
+
 # Session-modal popups. height = 4 yields two interior rows: legend + feedback.
 [[panes]]
 id = "pane"
@@ -61,6 +67,14 @@ id = "agent"
 title = "Agent Mode"
 placement = "popup"
 command = ["./target/release/herdr-modes", "run", "agent"]
+width = "90%"
+height = 4
+
+[[panes]]
+id = "space"
+title = "Space Mode"
+placement = "popup"
+command = ["./target/release/herdr-modes", "run", "space"]
 width = "90%"
 height = 4
 

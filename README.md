@@ -13,8 +13,10 @@ herdr's key model is tmux-shaped: one prefix plus a flat namespace of named
 actions. There is no user-definable mode. But three modes *are* already sticky —
 `resize_mode`, `copy_mode` (which subsumes zellij's scroll + search +
 entersearch), and `goto` — so this plugin supplies the three that are missing —
-**pane**, **tab**, and **move** — plus **agent**, which has no zellij
-counterpart at all: sticky navigation of herdr's agent panel.
+**pane**, **tab**, and **move** — plus two with no zellij counterpart at all:
+**agent**, sticky navigation of herdr's agent panel, and **space**, which walks
+the sidebar by really switching spaces, so the space you are about to pick is
+the one already on screen.
 
 ## How it works
 
@@ -68,6 +70,13 @@ key = "prefix+a"
 type = "plugin_action"
 command = "herdr-modes.agent"
 description = "agent mode"
+
+# prefix+w is workspace_picker by default; free it for space mode.
+[[keys.command]]
+key = "prefix+w"
+type = "plugin_action"
+command = "herdr-modes.space"
+description = "space mode"
 ```
 
 Validate and reload:
@@ -95,7 +104,8 @@ The actions each mode can bind:
 | tab | `prev_tab` `next_tab` `last_tab` `goto_tab` (bind to `1`–`9`) `new_tab` `close_tab` `rename_tab` `move_tab_left` `move_tab_right` `break_pane_new` `break_pane_prev` `break_pane_next` |
 | move | `swap_left` `swap_right` `swap_up` `swap_down` `swap_forward` `swap_backward` |
 | agent | `prev_agent` `next_agent` `last_agent` `goto_agent` (bind to `1`–`9`) `next_attention` `prev_attention` |
-| any | `exit` |
+| space | `prev_space` `next_space` `last_space` `goto_space` (bind to `1`–`9`) `next_space_attention` `prev_space_attention` |
+| any | `exit` `cancel` |
 
 Modes are only namespaces for a keymap, so any action can be bound in any mode.
 Keys with no herdr equivalent have no action at all: floating, pinned, and
@@ -114,6 +124,28 @@ Navigation follows the order `agent.list` reports, which is the panel's own
 `agent_panel_sort = "spaces"` grouping; `goto_agent` counts rows in that same
 order. Focusing an agent crosses spaces and tabs on its own, and (as anywhere
 in herdr) marks it seen, so a `done` agent becomes `idle` once you land on it.
+
+### Space mode
+
+herdr's own space navigation is a picker: the sidebar cursor moves, the view
+does not, and the space only changes when you commit. Space mode inverts that.
+Every keystroke calls `workspace.focus`, so the space switches underneath the
+popup as you drum `jk` — the preview *is* the switch, and there is no selection
+that can disagree with what you are looking at.
+
+That only works because the popup is session-modal: it keeps the keyboard while
+focus crosses spaces beneath it, exactly as agent mode already crosses them.
+
+Which makes leaving mean two things, so there are two ways out:
+
+- `exit` (`enter`, `ctrl+c`) keeps wherever you landed.
+- `cancel` puts focus back where the mode opened — the space, and the pane
+  inside it. Bind it to `esc` and browsing costs nothing.
+
+`next_space_attention` is `next_attention` one level up: it skips the spaces
+whose agents are all busy or already read, and lands on the next one holding an
+agent that is **blocked** on you or **done** with work you have not seen.
+`goto_space` counts sidebar rows, the same order `workspace.list` reports.
 
 ## Configuration
 
@@ -165,6 +197,10 @@ Two behaviours worth knowing if you build on this:
 - **The socket is one request per connection.** The server closes the connection
   as soon as it answers. Only `events.subscribe` holds one open. A client that
   caches a connection will see `Broken pipe` on its second call.
+- **Focusing a space carries its own tab and pane.** `workspace.focus` restores
+  whatever was active in that space, so leaving one and coming back needs no
+  bookkeeping beyond the workspace id — which is what makes `cancel` a
+  one-call undo.
 - **`agent.focus` takes any agent target, including a pane id.** `agent.list`
   hands back `pane_id` for every row, so panel navigation needs no separate
   name lookup — and the focus crosses workspace and tab boundaries itself.
