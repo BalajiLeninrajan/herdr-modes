@@ -30,9 +30,28 @@ Each keystroke is dispatched over the herdr socket API rather than by shelling
 out to the `herdr` binary. That keeps drumming instant, and it is the only way
 to reach `tab.move`, which has no CLI subcommand at all.
 
+Since herdr 0.9.0 a popup belongs to the tab it opened on: the client draws it
+and sends it keys only while that tab is on screen. Pane moves within a tab are
+unaffected, but any action that lands on another tab or space would leave the
+popup behind, alive and invisible. So after such an action the popup *hops*: it
+writes its state to `$HERDR_PLUGIN_STATE_DIR/resume.json`, asks herdr to run
+the mode's `open` action again, and exits. That action waits for the old popup
+to be gone, opens a fresh one on the new tab, and passes the state in through
+`HERDR_MODES_RESUME`, so `last_tab`, `last_space`, `cancel` and the feedback
+line all survive the hop. Closing the popup's own tab (or its last pane) closes
+the popup mid-request, so those arm the hop first. A hop costs one extra
+process spawn, about a tenth of a second.
+
+One more 0.9.0 wrinkle: only `workspace.focus`, `tab.focus` and `pane.focus`
+move the viewing client along with the server's focus. `agent.focus` and
+`pane.move` change what the server calls focused while the client keeps
+looking at the old tab, which would strand the popup all over again. So those
+two are always followed by a `pane.focus`, and a popup that has just hopped
+re-asserts its tab with `tab.focus` before reading its first key.
+
 ## Install
 
-Requires herdr `>= 0.7.0` and a Rust toolchain.
+Requires herdr `>= 0.9.0` and a Rust toolchain.
 
 ```bash
 git clone <this repo> ~/Documents/code/herdr-modes

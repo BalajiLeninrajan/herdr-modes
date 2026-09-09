@@ -134,6 +134,34 @@ impl Action {
         Ok(a)
     }
 
+    /// Whether the action can land the view on a different tab. Since herdr
+    /// 0.9.0 a popup is tied to the tab it opened on, so after one of these
+    /// the popup has to hop (see `resume`). Pane-level moves within a tab
+    /// never need it, which keeps `hjkl` drumming at one round trip.
+    pub fn may_leave_tab(self) -> bool {
+        matches!(
+            self,
+            Action::PrevTab
+                | Action::NextTab
+                | Action::LastTab
+                | Action::GotoTab(_)
+                | Action::NewTab
+                | Action::BreakPane(_)
+                | Action::PrevAgent
+                | Action::NextAgent
+                | Action::LastAgent
+                | Action::GotoAgent(_)
+                | Action::NextAttention
+                | Action::PrevAttention
+                | Action::PrevSpace
+                | Action::NextSpace
+                | Action::LastSpace
+                | Action::GotoSpace(_)
+                | Action::NextSpaceAttention
+                | Action::PrevSpaceAttention
+        )
+    }
+
     /// Short label for the auto-generated hint bar. Directional variants share
     /// a label so their keys collapse into one group ("hjkl focus").
     pub fn hint_label(self) -> &'static str {

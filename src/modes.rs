@@ -2,6 +2,7 @@
 
 use crate::client::{Client, Error};
 use crate::keymap::{Action, BreakTarget, Dir};
+use crate::resume::Resume;
 use serde_json::{Value, json};
 
 /// One row of herdr's agent panel, in the order `agent.list` reports them:
@@ -71,10 +72,70 @@ impl Session {
         }
     }
 
+    /// Pick up where the popup this one replaced left off.
+    pub fn restore(&mut self, r: &Resume) {
+        self.prev_tab_id = r.prev_tab_id.clone();
+        self.prev_agent_id = r.prev_agent_id.clone();
+        self.prev_workspace_id = r.prev_workspace_id.clone();
+        self.origin_workspace_id = r.origin_workspace_id.clone();
+        self.origin_pane_id = r.origin_pane_id.clone();
+    }
+
+    fn resume(&self, mode: &str, feedback: &str) -> Resume {
+        Resume {
+            mode: mode.to_string(),
+            written_unix_ms: 0,
+            prev_tab_id: self.prev_tab_id.clone(),
+            prev_agent_id: self.prev_agent_id.clone(),
+            prev_workspace_id: self.prev_workspace_id.clone(),
+            origin_workspace_id: self.origin_workspace_id.clone(),
+            origin_pane_id: self.origin_pane_id.clone(),
+            feedback: feedback.to_string(),
+        }
+    }
+
+    /// Arrange for a fresh popup on whatever tab is on screen once this one
+    /// is gone: leave the note, then have herdr run the mode's `open` action.
+    /// The caller exits afterwards; the action waits for that.
+    pub fn arm_hop(&mut self, mode: &str, feedback: &str) -> Result<(), Error> {
+        self.resume(mode, feedback).stamp().write()?;
+        let plugin_id =
+            std::env::var("HERDR_PLUGIN_ID").unwrap_or_else(|_| "herdr-modes".to_string());
+        let r = self.client.call(
+            "plugin.action.invoke",
+            json!({ "plugin_id": plugin_id, "action_id": mode }),
+        );
+        if r.is_err() {
+            Resume::clear();
+        }
+        r.map(|_| ())
+    }
+
+    /// Put the viewing client on the tab the server (and so this popup) is on.
+    pub fn sync_view(&mut self) -> Result<(), Error> {
+        if self.tab_id.is_empty() {
+            return Ok(());
+        }
+        let tab = self.tab_id.clone();
+        self.client.call("tab.focus", json!({ "tab_id": tab }))?;
+        Ok(())
+    }
+
+    /// Whether this action is about to take the popup's own tab away, which
+    /// herdr answers by closing the popup before the request even returns.
+    /// Such actions arm the hop first, since there is no "after".
+    pub fn will_close_owner_tab(&mut self, action: Action) -> Result<bool, Error> {
+        Ok(match action {
+            Action::CloseTab => true,
+            Action::ClosePane => self.tab_panes()?.len() <= 1,
+            _ => false,
+        })
+    }
+
     /// Re-read focus from the server. Popups have no pane id of their own, so
     /// the snapshot always reports the real underlying pane even while a mode
     /// is on screen.
-    fn refresh(&mut self) -> Result<(), Error> {
+    pub fn refresh(&mut self) -> Result<(), Error> {
         let r = self.client.call("session.snapshot", json!({}))?;
         let s = &r["snapshot"];
         if let Some(v) = s["focused_workspace_id"].as_str() {
@@ -323,6 +384,10 @@ impl Session {
             "pane.move",
             json!({ "pane_id": self.pane_id, "destination": destination, "focus": true }),
         )?;
+        // Same as `agent.focus`: the move's `focus` reaches the server only,
+        // so the client has to be brought along explicitly.
+        let pane = self.pane_id.clone();
+        self.client.call("pane.focus", json!({ "pane_id": pane }))?;
         self.refresh()?;
         Ok("broke pane out".into())
     }
@@ -395,6 +460,9 @@ impl Session {
         if self.agent_at_focus(agents).is_some() {
             self.prev_agent_id = Some(self.pane_id.clone());
         }
+        // `agent.focus` moves the server's focus but, on herdr 0.9.0, not the
+        // client's view. `pane.focus` is one of the calls the client follows.
+        self.client.call("pane.focus", json!({ "pane_id": &target.pane_id }))?;
         self.refresh()?;
         Ok(line)
     }
