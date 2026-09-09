@@ -111,6 +111,16 @@ impl Session {
         r.map(|_| ())
     }
 
+    /// Put the viewing client on the tab the server (and so this popup) is on.
+    pub fn sync_view(&mut self) -> Result<(), Error> {
+        if self.tab_id.is_empty() {
+            return Ok(());
+        }
+        let tab = self.tab_id.clone();
+        self.client.call("tab.focus", json!({ "tab_id": tab }))?;
+        Ok(())
+    }
+
     /// Whether this action is about to take the popup's own tab away, which
     /// herdr answers by closing the popup before the request even returns.
     /// Such actions arm the hop first, since there is no "after".
@@ -374,6 +384,10 @@ impl Session {
             "pane.move",
             json!({ "pane_id": self.pane_id, "destination": destination, "focus": true }),
         )?;
+        // Same as `agent.focus`: the move's `focus` reaches the server only,
+        // so the client has to be brought along explicitly.
+        let pane = self.pane_id.clone();
+        self.client.call("pane.focus", json!({ "pane_id": pane }))?;
         self.refresh()?;
         Ok("broke pane out".into())
     }
@@ -446,6 +460,9 @@ impl Session {
         if self.agent_at_focus(agents).is_some() {
             self.prev_agent_id = Some(self.pane_id.clone());
         }
+        // `agent.focus` moves the server's focus but, on herdr 0.9.0, not the
+        // client's view. `pane.focus` is one of the calls the client follows.
+        self.client.call("pane.focus", json!({ "pane_id": &target.pane_id }))?;
         self.refresh()?;
         Ok(line)
     }

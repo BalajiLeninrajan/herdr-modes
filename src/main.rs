@@ -190,6 +190,12 @@ fn run(mode_name: &str) -> Result<(), client::Error> {
         // The context was taken when the open was requested; focus has had
         // time to settle since, and it is what this popup is now tied to.
         session.refresh()?;
+        // The popup is tied to the server's active tab, but the client may
+        // still be looking elsewhere (herdr 0.9.0 only moves the client for
+        // explicit focus calls, and a tab that just closed under it lands
+        // wherever the client's fallback says). `tab.focus` is explicit, so
+        // this puts the client on the popup's tab before the first key.
+        session.sync_view()?;
         if feedback.is_empty() {
             feedback = r.feedback;
         }

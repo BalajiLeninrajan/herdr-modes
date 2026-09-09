@@ -42,6 +42,13 @@ line all survive the hop. Closing the popup's own tab (or its last pane) closes
 the popup mid-request, so those arm the hop first. A hop costs one extra
 process spawn, about a tenth of a second.
 
+One more 0.9.0 wrinkle: only `workspace.focus`, `tab.focus` and `pane.focus`
+move the viewing client along with the server's focus. `agent.focus` and
+`pane.move` change what the server calls focused while the client keeps
+looking at the old tab, which would strand the popup all over again. So those
+two are always followed by a `pane.focus`, and a popup that has just hopped
+re-asserts its tab with `tab.focus` before reading its first key.
+
 ## Install
 
 Requires herdr `>= 0.9.0` and a Rust toolchain.
