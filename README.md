@@ -7,11 +7,12 @@ any herdr action and say whether it acts once or keeps the mode open, so
 `j` `j` `j` walks three panes, tabs, agents or spaces on one prefix press,
 and none of it reaches the shell.
 
-Five modes ship: **pane**, **tab**, **move**, **agent** and **space**. Agent
-mode can jump straight to the next agent waiting on you. Space mode switches
-spaces as you browse and can cancel back to where you started. Nothing is
-bound until you write a config; [`config.example.toml`](config.example.toml)
-is a complete zellij-shaped keymap to start from.
+There are five modes: **pane**, **tab**, **move**, **agent** and **space**.
+Agent mode can jump straight to the next agent waiting on you. Space mode
+switches spaces as you browse and can cancel back to where you started.
+Nothing is bound until you write a config;
+[`config.example.toml`](config.example.toml) is a complete zellij-shaped
+keymap to start from.
 
 ## Install
 
