@@ -300,7 +300,9 @@ impl<A: Api> Session<A> {
             Action::PrevSpaceAttention => self.step_space_attention(-1),
 
             Action::Cancel => self.cancel(),
-            Action::Quit => Ok(String::new()),
+            // `exit` closes the popup and touches nothing, so the key loop
+            // answers it before asking the session to execute anything.
+            Action::Quit => unreachable!("exit is decided before execute"),
         }
     }
 
