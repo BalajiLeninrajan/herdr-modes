@@ -4,41 +4,81 @@ use crate::client::{Client, Error};
 use crate::keymap::{Action, BreakTo, Dir};
 use crate::resume::Resume;
 use serde_json::{Value, json};
+use std::convert::Infallible;
+use std::fmt;
+use std::str::FromStr;
+
+/// An agent's status as herdr reports it, in `agent_status` on both
+/// `agent.list` rows and `workspace.list` rows (where it is the roll-up of the
+/// space's agents). Unknown values are kept verbatim so feedback lines print
+/// what the server said.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AgentStatus {
+    Blocked,
+    Done,
+    Working,
+    Idle,
+    Other(String),
+}
+
+impl AgentStatus {
+    /// `blocked` is an approval or question waiting on you; `done` is finished
+    /// background work you have not seen yet. Those two are the panel's
+    /// attention queue; the rest are either busy or already read.
+    pub fn wants_attention(&self) -> bool {
+        matches!(self, AgentStatus::Blocked | AgentStatus::Done)
+    }
+}
+
+impl FromStr for AgentStatus {
+    type Err = Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Infallible> {
+        Ok(match s {
+            "blocked" => AgentStatus::Blocked,
+            "done" => AgentStatus::Done,
+            "working" => AgentStatus::Working,
+            "idle" => AgentStatus::Idle,
+            other => AgentStatus::Other(other.to_string()),
+        })
+    }
+}
+
+impl fmt::Display for AgentStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            AgentStatus::Blocked => "blocked",
+            AgentStatus::Done => "done",
+            AgentStatus::Working => "working",
+            AgentStatus::Idle => "idle",
+            AgentStatus::Other(s) => s,
+        })
+    }
+}
+
+/// The `agent_status` field of a list row; "unknown" when it is missing.
+fn status_of(row: &Value) -> AgentStatus {
+    let Ok(status) = row["agent_status"].as_str().unwrap_or("unknown").parse();
+    status
+}
 
 /// One row of herdr's agent panel, in the order `agent.list` reports them:
 /// grouped by space, which is the panel's own `agent_panel_sort = "spaces"`
 /// ordering.
 struct Agent {
     pane_id: String,
-    status: String,
+    status: AgentStatus,
     label: String,
 }
 
-impl Agent {
-    /// `blocked` is an approval or question waiting on you; `done` is finished
-    /// background work you have not seen yet. Those two are the panel's
-    /// attention queue — the rest are either busy or already read.
-    fn wants_attention(&self) -> bool {
-        self.status == "blocked" || self.status == "done"
-    }
-}
-
-/// One row of herdr's space sidebar, in `workspace.list` order — the same
+/// One row of herdr's space sidebar, in `workspace.list` order, the same
 /// order the sidebar draws and `number` counts.
 struct Space {
     id: String,
     label: String,
     /// The space's rolled-up agent status.
-    status: String,
+    status: AgentStatus,
     focused: bool,
-}
-
-impl Space {
-    /// A space wants you when its agents do: `blocked` is waiting on an answer,
-    /// `done` is finished work you have not looked at.
-    fn wants_attention(&self) -> bool {
-        self.status == "blocked" || self.status == "done"
-    }
 }
 
 pub struct Session {
@@ -466,7 +506,7 @@ impl Session {
                     .filter_map(|a| {
                         Some(Agent {
                             pane_id: a["pane_id"].as_str()?.to_string(),
-                            status: a["agent_status"].as_str().unwrap_or("unknown").to_string(),
+                            status: status_of(a),
                             // Most identifying first: several rows are usually
                             // the same kind of agent, so "claude" names nothing.
                             label: ["name", "terminal_title_stripped", "display_agent", "agent"]
@@ -567,7 +607,7 @@ impl Session {
         let from = self.agent_at_focus(&agents).map_or(off_panel, |i| i as i64);
         let hit = (1..=n)
             .map(|step| (((from + delta * step) % n + n) % n) as usize)
-            .find(|i| agents[*i].wants_attention());
+            .find(|i| agents[*i].status.wants_attention());
         match hit {
             Some(i) => self.focus_agent(&agents, i),
             None => Ok("nothing waiting".into()),
@@ -584,7 +624,7 @@ impl Session {
                         Some(Space {
                             id: w["workspace_id"].as_str()?.to_string(),
                             label: w["label"].as_str().unwrap_or("space").to_string(),
-                            status: w["agent_status"].as_str().unwrap_or("unknown").to_string(),
+                            status: status_of(w),
                             focused: w["focused"].as_bool().unwrap_or(false),
                         })
                     })
@@ -671,7 +711,7 @@ impl Session {
             .map_or(off_sidebar, |i| i as i64);
         let hit = (1..=n)
             .map(|step| (((from + delta * step) % n + n) % n) as usize)
-            .find(|i| spaces[*i].wants_attention());
+            .find(|i| spaces[*i].status.wants_attention());
         match hit {
             Some(i) => self.focus_space(&spaces, i),
             None => Ok("nothing waiting".into()),
@@ -693,5 +733,40 @@ impl Session {
         let _ = self.client.call("pane.focus", json!({ "pane_id": pane }));
         self.refresh()?;
         Ok(String::new())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_round_trips_through_display() {
+        for raw in ["blocked", "done", "working", "idle", "thinking"] {
+            let Ok(status) = raw.parse::<AgentStatus>();
+            assert_eq!(status.to_string(), raw);
+        }
+    }
+
+    #[test]
+    fn only_blocked_and_done_want_attention() {
+        let wants = |raw: &str| {
+            let Ok(status) = raw.parse::<AgentStatus>();
+            status.wants_attention()
+        };
+        assert!(wants("blocked"));
+        assert!(wants("done"));
+        assert!(!wants("working"));
+        assert!(!wants("idle"));
+        assert!(!wants("unknown"));
+    }
+
+    #[test]
+    fn missing_status_reads_as_unknown() {
+        assert_eq!(status_of(&json!({})).to_string(), "unknown");
+        assert_eq!(
+            status_of(&json!({ "agent_status": "done" })),
+            AgentStatus::Done
+        );
     }
 }
