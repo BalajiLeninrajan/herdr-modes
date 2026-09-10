@@ -145,6 +145,8 @@ fn open(entrypoint: &str) -> Result<(), client::Error> {
     let deadline = Instant::now() + HOP_WAIT;
     loop {
         match c.call("plugin.pane.open", params.clone()) {
+            // `clear` leaves a fresh note of another session's alone, so a
+            // plain keypress here cannot cancel a hop in flight elsewhere.
             Ok(_) => {
                 store.clear();
                 return Ok(());
