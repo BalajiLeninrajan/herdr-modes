@@ -19,7 +19,10 @@ use std::os::unix::net::UnixStream;
 pub enum Error {
     Io(std::io::Error),
     /// The server understood the request and refused it.
-    Api { code: String, message: String },
+    Api {
+        code: String,
+        message: String,
+    },
     Protocol(String),
 }
 
@@ -36,8 +39,15 @@ impl fmt::Display for Error {
 impl Error {
     /// Opening a popup while one is already up is an expected race, not a fault:
     /// the mode the user asked for is already on screen.
+    ///
+    /// herdr 0.9.0 reports this as code `ui_busy` with a message containing
+    /// "already open". Either one is enough, since the wording may change
+    /// without the code doing so, and vice versa.
     pub fn is_popup_already_open(&self) -> bool {
-        matches!(self, Error::Api { message, .. } if message.contains("already open"))
+        matches!(
+            self,
+            Error::Api { code, message } if code == "ui_busy" || message.contains("already open")
+        )
     }
 }
 
@@ -90,7 +100,11 @@ impl Client {
             }
             if let Some(err) = v.get("error") {
                 return Err(Error::Api {
-                    code: err.get("code").and_then(Value::as_str).unwrap_or("error").to_string(),
+                    code: err
+                        .get("code")
+                        .and_then(Value::as_str)
+                        .unwrap_or("error")
+                        .to_string(),
                     message: err
                         .get("message")
                         .and_then(Value::as_str)

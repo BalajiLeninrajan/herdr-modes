@@ -27,10 +27,11 @@ impl Dir {
 }
 
 #[derive(Clone, Copy)]
-pub enum BreakTarget {
-    NewTab,
-    PrevTab,
-    NextTab,
+/// Where `break_pane_*` sends the pane.
+pub enum BreakTo {
+    New,
+    Prev,
+    Next,
 }
 
 #[derive(Clone, Copy)]
@@ -50,7 +51,7 @@ pub enum Action {
     CloseTab,
     RenameTab,
     MoveTab(i64),
-    BreakPane(BreakTarget),
+    BreakPane(BreakTo),
 
     Swap(Dir),
     SwapCycle(bool),
@@ -101,9 +102,9 @@ impl Action {
             "rename_tab" => Action::RenameTab,
             "move_tab_left" => Action::MoveTab(-1),
             "move_tab_right" => Action::MoveTab(1),
-            "break_pane_new" => Action::BreakPane(BreakTarget::NewTab),
-            "break_pane_prev" => Action::BreakPane(BreakTarget::PrevTab),
-            "break_pane_next" => Action::BreakPane(BreakTarget::NextTab),
+            "break_pane_new" => Action::BreakPane(BreakTo::New),
+            "break_pane_prev" => Action::BreakPane(BreakTo::Prev),
+            "break_pane_next" => Action::BreakPane(BreakTo::Next),
             "goto_tab" => Action::GotoTab(digit(name, key)?),
 
             "swap_left" => Action::Swap(Dir::Left),

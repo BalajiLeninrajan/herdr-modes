@@ -27,7 +27,8 @@ const FRESH_FOR: Duration = Duration::from_secs(5);
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Resume {
     pub mode: String,
-    pub written_unix_ms: u64,
+    /// Set by `new`, so a note is never written unstamped.
+    written_unix_ms: u64,
     pub prev_tab_id: Option<String>,
     pub prev_agent_id: Option<String>,
     pub prev_workspace_id: Option<String>,
@@ -52,13 +53,32 @@ fn path() -> PathBuf {
 }
 
 impl Resume {
-    pub fn fresh(&self) -> bool {
-        now_ms().saturating_sub(self.written_unix_ms) < FRESH_FOR.as_millis() as u64
+    /// A note stamped with the current time. `mode` is the entrypoint the
+    /// `open` action will be asked for; the rest is what `Session::restore`
+    /// picks back up.
+    pub fn new(
+        mode: &str,
+        feedback: &str,
+        prev_tab_id: Option<String>,
+        prev_agent_id: Option<String>,
+        prev_workspace_id: Option<String>,
+        origin_workspace_id: String,
+        origin_pane_id: String,
+    ) -> Self {
+        Resume {
+            mode: mode.to_string(),
+            written_unix_ms: now_ms(),
+            prev_tab_id,
+            prev_agent_id,
+            prev_workspace_id,
+            origin_workspace_id,
+            origin_pane_id,
+            feedback: feedback.to_string(),
+        }
     }
 
-    pub fn stamp(mut self) -> Self {
-        self.written_unix_ms = now_ms();
-        self
+    pub fn fresh(&self) -> bool {
+        now_ms().saturating_sub(self.written_unix_ms) < FRESH_FOR.as_millis() as u64
     }
 
     /// Leave the note for the `open` action.
