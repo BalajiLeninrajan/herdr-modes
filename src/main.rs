@@ -69,7 +69,9 @@ fn main() -> ExitCode {
 /// without opening a popup and pressing keys. With a path, that file is
 /// checked instead of the one in the plugin config dir.
 fn check(path: Option<&Path>) -> ExitCode {
-    let (modes, warnings) = match path {
+    let config::Loaded {
+        modes, warnings, ..
+    } = match path {
         Some(p) => {
             println!("config: {}", p.display());
             config::load_from(p)
@@ -177,7 +179,11 @@ impl Drop for RawGuard {
 }
 
 fn run(mode_name: &str) -> Result<(), client::Error> {
-    let (modes, warnings) = config::load();
+    let config::Loaded {
+        modes,
+        ui,
+        warnings,
+    } = config::load();
     let Some(mode) = modes.get(mode_name) else {
         return Err(client::Error::Protocol(format!(
             "no mode named `{mode_name}`"
@@ -234,7 +240,13 @@ fn run(mode_name: &str) -> Result<(), client::Error> {
     let hint_text = mode.hint_text();
 
     loop {
-        hint::render(&mut out, &mode.label, hint_text.as_deref(), &feedback)?;
+        hint::render(
+            &mut out,
+            ui.accent,
+            &mode.label,
+            hint_text.as_deref(),
+            &feedback,
+        )?;
 
         let Event::Key(key) = event::read()? else {
             continue;

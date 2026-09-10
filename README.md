@@ -182,6 +182,13 @@ an action collapsed together (`hjkl focus`), so it never drifts out of sync with
 the keymap. Set `hint = "..."` on a mode to write it yourself, or `hint = ""` to
 hide the bar entirely; the mode then shows nothing but its feedback line.
 
+The label is drawn in the terminal's magenta unless a `[ui]` table says
+otherwise. `accent = "#cba6f7"` takes a hex colour, with or without the `#`,
+and `accent = "blue"` takes one of crossterm's colour names (black, red, green,
+yellow, blue, magenta, cyan, white, grey and their `dark_` variants). A value
+that parses as neither is reported like any other config problem and the
+default stays.
+
 Mode names are just strings. Adding a brand-new mode needs an `[[actions]]` and
 a `[[panes]]` entry in `herdr-plugin.toml` and a `[[keys.command]]` in herdr's
 config to open it, but nothing in the binary is hardcoded to the five built-in
