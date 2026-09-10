@@ -122,7 +122,7 @@ impl Store {
         Store::new(&dir, &socket)
     }
 
-    /// The herdr session notes written through this store are stamped with.
+    /// The socket path stamped on every note written through this store.
     pub fn socket(&self) -> &str {
         &self.socket
     }
