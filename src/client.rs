@@ -57,9 +57,21 @@ impl From<std::io::Error> for Error {
     }
 }
 
+/// One request to herdr, answered or refused. `Client` speaks to the socket;
+/// tests stand in a `FakeApi` so a `Session` can be driven without a server.
+pub trait Api {
+    fn call(&mut self, method: &str, params: Value) -> Result<Value, Error>;
+}
+
 pub struct Client {
     path: String,
     next_id: u64,
+}
+
+impl Api for Client {
+    fn call(&mut self, method: &str, params: Value) -> Result<Value, Error> {
+        Client::call(self, method, params)
+    }
 }
 
 impl Client {
@@ -113,6 +125,69 @@ impl Client {
                 });
             }
             return Ok(v.get("result").cloned().unwrap_or(Value::Null));
+        }
+    }
+}
+
+/// A scripted `Api` for tests: canned replies per method, handed out in
+/// order, and a record of every call as it came in. A method with nothing
+/// queued answers `null`, which is what the session treats as "no data".
+#[cfg(test)]
+pub mod fake {
+    use super::{Api, Error};
+    use serde_json::Value;
+    use std::collections::{HashMap, VecDeque};
+
+    #[derive(Default)]
+    pub struct FakeApi {
+        replies: HashMap<String, VecDeque<Result<Value, Error>>>,
+        calls: Vec<(String, Value)>,
+    }
+
+    impl FakeApi {
+        pub fn new() -> Self {
+            Self::default()
+        }
+
+        /// Queue a successful reply for `method`.
+        pub fn reply(mut self, method: &str, value: Value) -> Self {
+            self.replies
+                .entry(method.to_string())
+                .or_default()
+                .push_back(Ok(value));
+            self
+        }
+
+        /// Queue a refusal for `method`.
+        pub fn fail(mut self, method: &str, code: &str, message: &str) -> Self {
+            self.replies
+                .entry(method.to_string())
+                .or_default()
+                .push_back(Err(Error::Api {
+                    code: code.to_string(),
+                    message: message.to_string(),
+                }));
+            self
+        }
+
+        /// Every call so far, in order.
+        pub fn calls(&self) -> &[(String, Value)] {
+            &self.calls
+        }
+
+        /// The method names called so far, in order.
+        pub fn methods(&self) -> Vec<&str> {
+            self.calls.iter().map(|(m, _)| m.as_str()).collect()
+        }
+    }
+
+    impl Api for FakeApi {
+        fn call(&mut self, method: &str, params: Value) -> Result<Value, Error> {
+            self.calls.push((method.to_string(), params));
+            self.replies
+                .get_mut(method)
+                .and_then(VecDeque::pop_front)
+                .unwrap_or(Ok(Value::Null))
         }
     }
 }
