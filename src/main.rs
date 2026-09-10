@@ -1,4 +1,4 @@
-//! herdr-modes — zellij-style sticky modes for herdr.
+//! herdr-modes: zellij-style sticky modes for herdr.
 //!
 //! `open <mode>` runs as a plugin action and opens the modal popup.
 //! `run <mode>` runs inside that popup and owns the key loop.
@@ -42,9 +42,13 @@ fn main() -> ExitCode {
 
     match sub {
         Some("check") => {
-            return match args.get(2).map(String::as_str) {
-                Some("--actions") => list_actions(),
-                path => check(path.map(Path::new)),
+            return match (args.get(2).map(String::as_str), args.get(3)) {
+                (Some("--actions"), None) => list_actions(),
+                (path, None) => check(path.map(Path::new)),
+                _ => {
+                    eprintln!("usage: herdr-modes check [path | --actions]");
+                    ExitCode::from(2)
+                }
             };
         }
         Some("open") | Some("run") => {}
@@ -140,9 +144,11 @@ fn list_actions() -> ExitCode {
                 spec.name.to_string()
             };
             let tab = if spec.leaves_tab {
-                "may leave the tab, so a sticky binding hops"
+                "may land on another tab, so a sticky binding hops"
+            } else if matches!(spec.name, "close_tab" | "close_pane") {
+                "can close the popup's own tab, so the hop is armed first"
             } else {
-                "stays on the tab"
+                "stays on its tab"
             };
             println!("  {name:<28} {:<10} {tab}", spec.label);
         }
