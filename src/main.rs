@@ -12,6 +12,7 @@ mod config;
 mod hint;
 mod keymap;
 mod modes;
+mod nav;
 mod resume;
 
 use client::Client;

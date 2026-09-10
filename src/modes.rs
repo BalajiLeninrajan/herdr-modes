@@ -2,6 +2,7 @@
 
 use crate::client::{Client, Error};
 use crate::keymap::{Action, BreakTo, Dir};
+use crate::nav;
 use crate::resume::Resume;
 use serde_json::{Value, json};
 use std::convert::Infallible;
@@ -232,10 +233,10 @@ impl Session {
         if tabs.len() < 2 {
             return Ok("only one tab".into());
         }
-        let cur = tabs.iter().position(|t| *t == self.tab_id).unwrap_or(0) as i64;
-        let n = tabs.len() as i64;
-        let next = ((cur + delta) % n + n) % n;
-        let target = tabs[next as usize].clone();
+        let cur = tabs.iter().position(|t| *t == self.tab_id).unwrap_or(0);
+        let n = tabs.len();
+        let next = nav::step(Some(cur), delta, n);
+        let target = tabs[next].clone();
         self.focus_tab(&target)?;
         Ok(format!("tab {}/{}", next + 1, n))
     }
@@ -411,25 +412,16 @@ impl Session {
     }
 
     /// `tab.move` has no CLI subcommand; it is reachable only over the socket.
-    ///
-    /// `insert_index` is evaluated against the tab list *including* this tab,
-    /// so moving right has to clear its own slot: cur + 2, not cur + 1.
-    /// Moving left needs no such adjustment.
+    /// `nav::tab_move` explains the off-by-one in `insert_index`.
     fn move_tab(&mut self, delta: i64) -> Result<String, Error> {
         let tabs = self.tabs()?;
-        let n = tabs.len() as i64;
-        if n < 2 {
+        if tabs.len() < 2 {
             return Ok("only one tab".into());
         }
-        let cur = tabs.iter().position(|t| *t == self.tab_id).unwrap_or(0) as i64;
-        let (insert, landed) = if delta > 0 {
-            (cur + 2, cur + 1)
-        } else {
-            (cur - 1, cur - 1)
-        };
-        if insert < 0 || insert > n {
+        let cur = tabs.iter().position(|t| *t == self.tab_id).unwrap_or(0);
+        let Some((insert, landed)) = nav::tab_move(cur, delta, tabs.len()) else {
             return Ok("at end".into());
-        }
+        };
         self.client.call(
             "tab.move",
             json!({ "tab_id": self.tab_id, "insert_index": insert as u64 }),
@@ -445,15 +437,14 @@ impl Session {
                 if tabs.len() < 2 {
                     return Ok("no other tab".into());
                 }
-                let cur = tabs.iter().position(|t| *t == self.tab_id).unwrap_or(0) as i64;
-                let n = tabs.len() as i64;
+                let cur = tabs.iter().position(|t| *t == self.tab_id).unwrap_or(0);
                 let delta = if matches!(target, BreakTo::Prev) {
                     -1
                 } else {
                     1
                 };
-                let idx = ((cur + delta) % n + n) % n;
-                json!({ "type": "tab", "tab_id": tabs[idx as usize], "split": "right" })
+                let idx = nav::wrap(cur as i64 + delta, tabs.len());
+                json!({ "type": "tab", "tab_id": tabs[idx], "split": "right" })
             }
         };
         self.client.call(
@@ -481,13 +472,12 @@ impl Session {
         if panes.len() < 2 {
             return Ok("only one pane".into());
         }
-        let cur = panes.iter().position(|p| *p == self.pane_id).unwrap_or(0) as i64;
-        let n = panes.len() as i64;
+        let cur = panes.iter().position(|p| *p == self.pane_id).unwrap_or(0);
         let delta = if forward { 1 } else { -1 };
-        let idx = ((cur + delta) % n + n) % n;
+        let idx = nav::wrap(cur as i64 + delta, panes.len());
         self.client.call(
             "pane.swap",
-            json!({ "source_pane_id": self.pane_id, "target_pane_id": panes[idx as usize] }),
+            json!({ "source_pane_id": self.pane_id, "target_pane_id": panes[idx] }),
         )?;
         Ok(if forward {
             "swap forward".into()
@@ -562,15 +552,10 @@ impl Session {
         if agents.is_empty() {
             return Ok("no agents".into());
         }
-        let n = agents.len() as i64;
         // From a pane with no agent in it, stepping enters the panel at
         // whichever end the direction implies rather than doing nothing.
-        let next = match self.agent_at_focus(&agents) {
-            Some(cur) => ((cur as i64 + delta) % n + n) % n,
-            None if delta > 0 => 0,
-            None => n - 1,
-        };
-        self.focus_agent(&agents, next as usize)
+        let next = nav::step(self.agent_at_focus(&agents), delta, agents.len());
+        self.focus_agent(&agents, next)
     }
 
     fn goto_agent(&mut self, n: usize) -> Result<String, Error> {
@@ -599,14 +584,8 @@ impl Session {
         if agents.is_empty() {
             return Ok("no agents".into());
         }
-        let n = agents.len() as i64;
-        // Starting off the panel puts the search just outside the near end, so
-        // the first step lands on that end row instead of skipping it.
-        let off_panel = if delta > 0 { -1 } else { n };
-        let from = self.agent_at_focus(&agents).map_or(off_panel, |i| i as i64);
-        let hit = (1..=n)
-            .map(|step| (((from + delta * step) % n + n) % n) as usize)
-            .find(|i| agents[*i].status.wants_attention());
+        let cur = self.agent_at_focus(&agents);
+        let hit = nav::find_attention(&agents, cur, delta, |a| a.status.wants_attention());
         match hit {
             Some(i) => self.focus_agent(&agents, i),
             None => Ok("nothing waiting".into()),
@@ -670,10 +649,9 @@ impl Session {
         if spaces.len() < 2 {
             return Ok("only one space".into());
         }
-        let n = spaces.len() as i64;
-        let cur = self.space_at_focus(&spaces).unwrap_or(0) as i64;
-        let next = ((cur + delta) % n + n) % n;
-        self.focus_space(&spaces, next as usize)
+        let cur = self.space_at_focus(&spaces).unwrap_or(0);
+        let next = nav::step(Some(cur), delta, spaces.len());
+        self.focus_space(&spaces, next)
     }
 
     fn goto_space(&mut self, n: usize) -> Result<String, Error> {
@@ -701,16 +679,8 @@ impl Session {
         if spaces.is_empty() {
             return Ok("no spaces".into());
         }
-        let n = spaces.len() as i64;
-        // Starting off the sidebar puts the search just outside the near end,
-        // so the first step lands on that end row instead of skipping it.
-        let off_sidebar = if delta > 0 { -1 } else { n };
-        let from = self
-            .space_at_focus(&spaces)
-            .map_or(off_sidebar, |i| i as i64);
-        let hit = (1..=n)
-            .map(|step| (((from + delta * step) % n + n) % n) as usize)
-            .find(|i| spaces[*i].status.wants_attention());
+        let cur = self.space_at_focus(&spaces);
+        let hit = nav::find_attention(&spaces, cur, delta, |s| s.status.wants_attention());
         match hit {
             Some(i) => self.focus_space(&spaces, i),
             None => Ok("nothing waiting".into()),
