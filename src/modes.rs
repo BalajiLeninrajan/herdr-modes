@@ -1,9 +1,9 @@
 //! Executes a keymap Action against the herdr socket API.
 
-use crate::client::{Client, Error};
+use crate::client::{Api, Error};
 use crate::keymap::{Action, BreakTo, Dir};
 use crate::nav;
-use crate::resume::Resume;
+use crate::resume::{Resume, Store};
 use serde_json::{Value, json};
 use std::convert::Infallible;
 use std::fmt;
@@ -82,8 +82,12 @@ struct Space {
     focused: bool,
 }
 
-pub struct Session {
-    pub client: Client,
+pub struct Session<A: Api> {
+    pub api: A,
+    /// Where a hop note is left, and for which herdr session.
+    store: Store,
+    /// This plugin's id, the one `plugin.action.invoke` is addressed to.
+    plugin_id: String,
     pub workspace_id: String,
     pub tab_id: String,
     pub pane_id: String,
@@ -98,10 +102,19 @@ pub struct Session {
     origin_pane_id: String,
 }
 
-impl Session {
-    pub fn new(client: Client, workspace_id: String, tab_id: String, pane_id: String) -> Self {
+impl<A: Api> Session<A> {
+    pub fn new(
+        api: A,
+        store: Store,
+        plugin_id: String,
+        workspace_id: String,
+        tab_id: String,
+        pane_id: String,
+    ) -> Self {
         Session {
-            client,
+            api,
+            store,
+            plugin_id,
             origin_workspace_id: workspace_id.clone(),
             origin_pane_id: pane_id.clone(),
             workspace_id,
@@ -125,6 +138,7 @@ impl Session {
     fn resume(&self, mode: &str, feedback: &str) -> Resume {
         Resume::new(
             mode,
+            self.store.socket(),
             feedback,
             self.prev_tab_id.clone(),
             self.prev_agent_id.clone(),
@@ -138,17 +152,21 @@ impl Session {
     /// is gone: leave the note, then have herdr run the mode's `open` action.
     /// The caller exits afterwards; the action waits for that.
     pub fn arm_hop(&mut self, mode: &str, feedback: &str) -> Result<(), Error> {
-        self.resume(mode, feedback).write()?;
-        let plugin_id =
-            std::env::var("HERDR_PLUGIN_ID").unwrap_or_else(|_| "herdr-modes".to_string());
-        let r = self.client.call(
+        self.store.write(&self.resume(mode, feedback))?;
+        let r = self.api.call(
             "plugin.action.invoke",
-            json!({ "plugin_id": plugin_id, "action_id": mode }),
+            json!({ "plugin_id": &self.plugin_id, "action_id": mode }),
         );
         if r.is_err() {
-            Resume::clear();
+            self.store.clear();
         }
         r.map(|_| ())
+    }
+
+    /// Call an armed hop off: the action it was armed for failed, so the
+    /// popup is staying and the waiting `open` should stand down.
+    pub fn disarm_hop(&self) {
+        self.store.clear();
     }
 
     /// Put the viewing client on the tab the server (and so this popup) is on.
@@ -157,7 +175,7 @@ impl Session {
             return Ok(());
         }
         let tab = self.tab_id.clone();
-        self.client.call("tab.focus", json!({ "tab_id": tab }))?;
+        self.api.call("tab.focus", json!({ "tab_id": tab }))?;
         Ok(())
     }
 
@@ -176,7 +194,7 @@ impl Session {
     /// the snapshot always reports the real underlying pane even while a mode
     /// is on screen.
     pub fn refresh(&mut self) -> Result<(), Error> {
-        let r = self.client.call("session.snapshot", json!({}))?;
+        let r = self.api.call("session.snapshot", json!({}))?;
         let s = &r["snapshot"];
         if let Some(v) = s["focused_workspace_id"].as_str() {
             self.workspace_id = v.to_string();
@@ -192,7 +210,7 @@ impl Session {
 
     fn tabs(&mut self) -> Result<Vec<String>, Error> {
         let r = self
-            .client
+            .api
             .call("tab.list", json!({ "workspace_id": self.workspace_id }))?;
         Ok(r["tabs"]
             .as_array()
@@ -207,7 +225,7 @@ impl Session {
     /// Panes of the current tab, in list order.
     fn tab_panes(&mut self) -> Result<Vec<String>, Error> {
         let r = self
-            .client
+            .api
             .call("pane.list", json!({ "workspace_id": self.workspace_id }))?;
         Ok(r["panes"]
             .as_array()
@@ -221,7 +239,7 @@ impl Session {
     }
 
     fn focus_tab(&mut self, tab_id: &str) -> Result<(), Error> {
-        self.client.call("tab.focus", json!({ "tab_id": tab_id }))?;
+        self.api.call("tab.focus", json!({ "tab_id": tab_id }))?;
         if tab_id != self.tab_id {
             self.prev_tab_id = Some(std::mem::replace(&mut self.tab_id, tab_id.to_string()));
         }
@@ -287,7 +305,7 @@ impl Session {
     }
 
     fn focus(&mut self, dir: Dir) -> Result<String, Error> {
-        let r = self.client.call(
+        let r = self.api.call(
             "pane.focus_direction",
             json!({ "direction": dir.as_str(), "pane_id": self.pane_id }),
         )?;
@@ -313,20 +331,20 @@ impl Session {
         }
         let cur = panes.iter().position(|p| *p == self.pane_id).unwrap_or(0);
         let next = panes[(cur + 1) % panes.len()].clone();
-        self.client.call("pane.focus", json!({ "pane_id": next }))?;
+        self.api.call("pane.focus", json!({ "pane_id": next }))?;
         self.pane_id = next;
         Ok("cycle".into())
     }
 
     fn close_pane(&mut self) -> Result<String, Error> {
-        self.client
+        self.api
             .call("pane.close", json!({ "pane_id": self.pane_id }))?;
         self.refresh()?;
         Ok("closed pane".into())
     }
 
     fn split(&mut self, dir: &str) -> Result<String, Error> {
-        let r = self.client.call(
+        let r = self.api.call(
             "pane.split",
             json!({ "direction": dir, "target_pane_id": self.pane_id, "focus": true }),
         )?;
@@ -337,7 +355,7 @@ impl Session {
     }
 
     fn zoom(&mut self) -> Result<String, Error> {
-        self.client.call(
+        self.api.call(
             "pane.zoom",
             json!({ "pane_id": self.pane_id, "mode": "toggle" }),
         )?;
@@ -356,7 +374,7 @@ impl Session {
         } else {
             Value::String(label)
         };
-        self.client.call(
+        self.api.call(
             "pane.rename",
             json!({ "pane_id": self.pane_id, "label": label }),
         )?;
@@ -381,7 +399,7 @@ impl Session {
     }
 
     fn new_tab(&mut self) -> Result<String, Error> {
-        self.client.call(
+        self.api.call(
             "tab.create",
             json!({ "workspace_id": self.workspace_id, "focus": true }),
         )?;
@@ -390,7 +408,7 @@ impl Session {
     }
 
     fn close_tab(&mut self) -> Result<String, Error> {
-        self.client
+        self.api
             .call("tab.close", json!({ "tab_id": self.tab_id }))?;
         self.prev_tab_id = None;
         self.refresh()?;
@@ -404,7 +422,7 @@ impl Session {
         if label.is_empty() {
             return Ok("cancelled".into());
         }
-        self.client.call(
+        self.api.call(
             "tab.rename",
             json!({ "tab_id": self.tab_id, "label": label }),
         )?;
@@ -422,7 +440,7 @@ impl Session {
         let Some((insert, landed)) = nav::tab_move(cur, delta, tabs.len()) else {
             return Ok("at end".into());
         };
-        self.client.call(
+        self.api.call(
             "tab.move",
             json!({ "tab_id": self.tab_id, "insert_index": insert as u64 }),
         )?;
@@ -447,20 +465,20 @@ impl Session {
                 json!({ "type": "tab", "tab_id": tabs[idx], "split": "right" })
             }
         };
-        self.client.call(
+        self.api.call(
             "pane.move",
             json!({ "pane_id": self.pane_id, "destination": destination, "focus": true }),
         )?;
         // Same as `agent.focus`: the move's `focus` reaches the server only,
         // so the client has to be brought along explicitly.
         let pane = self.pane_id.clone();
-        self.client.call("pane.focus", json!({ "pane_id": pane }))?;
+        self.api.call("pane.focus", json!({ "pane_id": pane }))?;
         self.refresh()?;
         Ok("broke pane out".into())
     }
 
     fn swap(&mut self, dir: Dir) -> Result<String, Error> {
-        self.client.call(
+        self.api.call(
             "pane.swap",
             json!({ "direction": dir.as_str(), "pane_id": self.pane_id }),
         )?;
@@ -475,7 +493,7 @@ impl Session {
         let cur = panes.iter().position(|p| *p == self.pane_id).unwrap_or(0);
         let delta = if forward { 1 } else { -1 };
         let idx = nav::wrap(cur as i64 + delta, panes.len());
-        self.client.call(
+        self.api.call(
             "pane.swap",
             json!({ "source_pane_id": self.pane_id, "target_pane_id": panes[idx] }),
         )?;
@@ -487,7 +505,7 @@ impl Session {
     }
 
     fn agents(&mut self) -> Result<Vec<Agent>, Error> {
-        let r = self.client.call("agent.list", json!({}))?;
+        let r = self.api.call("agent.list", json!({}))?;
         Ok(r["agents"]
             .as_array()
             .map(|a| {
@@ -534,14 +552,14 @@ impl Session {
             target.label,
             target.status
         );
-        self.client
+        self.api
             .call("agent.focus", json!({ "target": &target.pane_id }))?;
         if self.agent_at_focus(agents).is_some() {
             self.prev_agent_id = Some(self.pane_id.clone());
         }
         // `agent.focus` moves the server's focus but, on herdr 0.9.0, not the
         // client's view. `pane.focus` is one of the calls the client follows.
-        self.client
+        self.api
             .call("pane.focus", json!({ "pane_id": &target.pane_id }))?;
         self.refresh()?;
         Ok(line)
@@ -593,7 +611,7 @@ impl Session {
     }
 
     fn spaces(&mut self) -> Result<Vec<Space>, Error> {
-        let r = self.client.call("workspace.list", json!({}))?;
+        let r = self.api.call("workspace.list", json!({}))?;
         Ok(r["workspaces"]
             .as_array()
             .map(|a| {
@@ -636,7 +654,7 @@ impl Session {
             return Ok(format!("{line} \u{b7} already here"));
         }
         let id = target.id.clone();
-        self.client
+        self.api
             .call("workspace.focus", json!({ "workspace_id": id.clone() }))?;
         self.prev_workspace_id = Some(std::mem::replace(&mut self.workspace_id, id));
         // The new space brings its own active tab and pane with it.
@@ -695,11 +713,11 @@ impl Session {
         }
         let workspace = self.origin_workspace_id.clone();
         let pane = self.origin_pane_id.clone();
-        self.client
+        self.api
             .call("workspace.focus", json!({ "workspace_id": workspace }))?;
         // The pane may be gone — closed from inside the mode — and then the
         // space it lived in is as close to where you were as there is.
-        let _ = self.client.call("pane.focus", json!({ "pane_id": pane }));
+        let _ = self.api.call("pane.focus", json!({ "pane_id": pane }));
         self.refresh()?;
         Ok(String::new())
     }
@@ -708,6 +726,273 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::client::fake::FakeApi;
+    use crate::resume::{TempDir, temp_store};
+
+    const SOCKET: &str = "/run/herdr/test.sock";
+
+    /// A session opened on pane `p1` of tab `t1` in space `w1`, with its
+    /// hop note in a temp dir named after the test. The dir lives as long
+    /// as the guard, so keep it in scope next to the session.
+    fn session(test: &str, api: FakeApi) -> (TempDir, Session<FakeApi>) {
+        let (dir, store) = temp_store(test, SOCKET);
+        let session = Session::new(
+            api,
+            store,
+            "herdr-modes".into(),
+            "w1".into(),
+            "t1".into(),
+            "p1".into(),
+        );
+        (dir, session)
+    }
+
+    fn agents(rows: &[(&str, &str)]) -> Value {
+        let agents: Vec<Value> = rows
+            .iter()
+            .map(|(pane, status)| json!({ "pane_id": pane, "name": pane, "agent_status": status }))
+            .collect();
+        json!({ "agents": agents })
+    }
+
+    fn tabs(ids: &[&str]) -> Value {
+        let tabs: Vec<Value> = ids.iter().map(|id| json!({ "tab_id": id })).collect();
+        json!({ "tabs": tabs })
+    }
+
+    fn panes(rows: &[(&str, &str)]) -> Value {
+        let panes: Vec<Value> = rows
+            .iter()
+            .map(|(pane, tab)| json!({ "pane_id": pane, "tab_id": tab }))
+            .collect();
+        json!({ "panes": panes })
+    }
+
+    fn no_prompt(_: &str) -> Option<String> {
+        None
+    }
+
+    #[test]
+    fn focus_agent_from_an_agent_row_records_where_it_came_from() {
+        let api = FakeApi::new().reply("agent.list", agents(&[("p1", "idle"), ("p2", "done")]));
+        let (_dir, mut s) = session("focus_agent_from_agent", api);
+
+        let line = s.execute(Action::GotoAgent(2), no_prompt).unwrap();
+
+        assert_eq!(line, "2/2 p2 \u{b7} done");
+        assert_eq!(
+            s.api.calls(),
+            &[
+                ("agent.list".to_string(), json!({})),
+                ("agent.focus".to_string(), json!({ "target": "p2" })),
+                ("pane.focus".to_string(), json!({ "pane_id": "p2" })),
+                ("session.snapshot".to_string(), json!({})),
+            ]
+        );
+        assert_eq!(s.prev_agent_id.as_deref(), Some("p1"));
+    }
+
+    #[test]
+    fn focus_agent_from_a_plain_pane_records_no_previous_agent() {
+        let api = FakeApi::new().reply("agent.list", agents(&[("p2", "blocked")]));
+        let (_dir, mut s) = session("focus_agent_from_plain_pane", api);
+
+        s.execute(Action::NextAgent, no_prompt).unwrap();
+
+        assert_eq!(
+            s.api.methods(),
+            [
+                "agent.list",
+                "agent.focus",
+                "pane.focus",
+                "session.snapshot"
+            ]
+        );
+        assert_eq!(s.api.calls()[2].1, json!({ "pane_id": "p2" }));
+        assert_eq!(s.prev_agent_id, None);
+    }
+
+    #[test]
+    fn break_pane_to_a_new_tab_moves_then_brings_the_client_along() {
+        let (_dir, mut s) = session("break_pane_new", FakeApi::new());
+
+        let line = s
+            .execute(Action::BreakPane(BreakTo::New), no_prompt)
+            .unwrap();
+
+        assert_eq!(line, "broke pane out");
+        assert_eq!(
+            s.api.calls(),
+            &[
+                (
+                    "pane.move".to_string(),
+                    json!({
+                        "pane_id": "p1",
+                        "destination": { "type": "new_tab" },
+                        "focus": true,
+                    })
+                ),
+                ("pane.focus".to_string(), json!({ "pane_id": "p1" })),
+                ("session.snapshot".to_string(), json!({})),
+            ]
+        );
+    }
+
+    #[test]
+    fn closing_the_tab_always_takes_the_owner_tab_away() {
+        let (_dir, mut s) = session("will_close_close_tab", FakeApi::new());
+        assert!(s.will_close_owner_tab(Action::CloseTab).unwrap());
+        assert!(s.api.calls().is_empty());
+    }
+
+    #[test]
+    fn closing_the_last_pane_takes_the_owner_tab_away() {
+        let api = FakeApi::new().reply("pane.list", panes(&[("p1", "t1"), ("p9", "t2")]));
+        let (_dir, mut s) = session("will_close_last_pane", api);
+        assert!(s.will_close_owner_tab(Action::ClosePane).unwrap());
+        assert_eq!(
+            s.api.calls(),
+            &[("pane.list".to_string(), json!({ "workspace_id": "w1" }))]
+        );
+    }
+
+    #[test]
+    fn closing_one_of_two_panes_keeps_the_owner_tab() {
+        let api = FakeApi::new().reply("pane.list", panes(&[("p1", "t1"), ("p2", "t1")]));
+        let (_dir, mut s) = session("will_close_one_of_two", api);
+        assert!(!s.will_close_owner_tab(Action::ClosePane).unwrap());
+    }
+
+    #[test]
+    fn other_actions_never_take_the_owner_tab_away() {
+        let (_dir, mut s) = session("will_close_other", FakeApi::new());
+        assert!(!s.will_close_owner_tab(Action::NextTab).unwrap());
+        assert!(!s.will_close_owner_tab(Action::Zoom).unwrap());
+        assert!(s.api.calls().is_empty());
+    }
+
+    #[test]
+    fn arm_hop_leaves_a_note_and_invokes_the_open_action() {
+        let (_dir, mut s) = session("arm_hop_ok", FakeApi::new());
+        s.prev_tab_id = Some("t0".into());
+        s.prev_workspace_id = Some("w0".into());
+
+        s.arm_hop("tab", "tab 2/3").unwrap();
+
+        assert_eq!(
+            s.api.calls(),
+            &[(
+                "plugin.action.invoke".to_string(),
+                json!({ "plugin_id": "herdr-modes", "action_id": "tab" })
+            )]
+        );
+        let note = s.store.pending("tab").expect("note written");
+        assert_eq!(note.mode, "tab");
+        assert_eq!(note.socket, SOCKET);
+        assert_eq!(note.feedback, "tab 2/3");
+        assert_eq!(note.prev_tab_id.as_deref(), Some("t0"));
+        assert_eq!(note.prev_agent_id, None);
+        assert_eq!(note.prev_workspace_id.as_deref(), Some("w0"));
+        assert_eq!(note.origin_workspace_id, "w1");
+        assert_eq!(note.origin_pane_id, "p1");
+    }
+
+    #[test]
+    fn arm_hop_withdraws_the_note_when_the_invoke_fails() {
+        let api = FakeApi::new().fail("plugin.action.invoke", "not_found", "no such action");
+        let (_dir, mut s) = session("arm_hop_fail", api);
+
+        let err = s.arm_hop("tab", "").unwrap_err();
+
+        assert_eq!(err.to_string(), "not_found: no such action");
+        assert_eq!(s.api.methods(), ["plugin.action.invoke"]);
+        assert!(!s.store.still_pending());
+    }
+
+    #[test]
+    fn disarm_hop_removes_the_note() {
+        let (_dir, mut s) = session("disarm_hop", FakeApi::new());
+        s.arm_hop("tab", "").unwrap();
+        assert!(s.store.still_pending());
+        s.disarm_hop();
+        assert!(!s.store.still_pending());
+    }
+
+    #[test]
+    fn cancel_at_the_origin_pane_does_nothing() {
+        let (_dir, mut s) = session("cancel_at_origin", FakeApi::new());
+        assert_eq!(s.execute(Action::Cancel, no_prompt).unwrap(), "");
+        assert!(s.api.calls().is_empty());
+    }
+
+    #[test]
+    fn cancel_elsewhere_goes_back_to_the_origin() {
+        let (_dir, mut s) = session("cancel_elsewhere", FakeApi::new());
+        s.workspace_id = "w2".into();
+        s.tab_id = "t5".into();
+        s.pane_id = "p7".into();
+
+        assert_eq!(s.execute(Action::Cancel, no_prompt).unwrap(), "");
+
+        assert_eq!(
+            s.api.calls(),
+            &[
+                (
+                    "workspace.focus".to_string(),
+                    json!({ "workspace_id": "w1" })
+                ),
+                ("pane.focus".to_string(), json!({ "pane_id": "p1" })),
+                ("session.snapshot".to_string(), json!({})),
+            ]
+        );
+    }
+
+    #[test]
+    fn step_tab_wraps_from_the_last_tab_to_the_first() {
+        let api = FakeApi::new().reply("tab.list", tabs(&["ta", "tb", "t1"]));
+        let (_dir, mut s) = session("step_tab_wraps", api);
+
+        let line = s.execute(Action::NextTab, no_prompt).unwrap();
+
+        assert_eq!(line, "tab 1/3");
+        assert_eq!(
+            s.api.calls(),
+            &[
+                ("tab.list".to_string(), json!({ "workspace_id": "w1" })),
+                ("tab.focus".to_string(), json!({ "tab_id": "ta" })),
+                ("session.snapshot".to_string(), json!({})),
+            ]
+        );
+        assert_eq!(s.tab_id, "ta");
+        assert_eq!(s.prev_tab_id.as_deref(), Some("t1"));
+    }
+
+    #[test]
+    fn restore_then_resume_round_trips_the_ids() {
+        let note = Resume::new(
+            "pane",
+            SOCKET,
+            "before the hop",
+            Some("t0".into()),
+            Some("p0".into()),
+            Some("w0".into()),
+            "w9".into(),
+            "p9".into(),
+        );
+        let (_dir, mut s) = session("restore_resume", FakeApi::new());
+
+        s.restore(&note);
+        let again = s.resume("pane", "after the hop");
+
+        assert_eq!(again.prev_tab_id.as_deref(), Some("t0"));
+        assert_eq!(again.prev_agent_id.as_deref(), Some("p0"));
+        assert_eq!(again.prev_workspace_id.as_deref(), Some("w0"));
+        assert_eq!(again.origin_workspace_id, "w9");
+        assert_eq!(again.origin_pane_id, "p9");
+        assert_eq!(again.socket, SOCKET);
+        assert_eq!(again.feedback, "after the hop");
+        assert!(s.api.calls().is_empty());
+    }
 
     #[test]
     fn status_round_trips_through_display() {

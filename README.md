@@ -244,6 +244,11 @@ tab, and passes the state in through `HERDR_MODES_RESUME`, so `last_tab`,
 own tab (or its last pane) kills the popup mid-request, so those arm the hop
 first. A hop costs one extra process spawn, about a tenth of a second.
 
+The state dir is shared by every herdr session on the machine, so the note
+also records the socket it was written for. An `open` under a different
+`HERDR_SOCKET_PATH` leaves a fresh note alone and only clears it once it is
+older than five seconds.
+
 Only `workspace.focus`, `tab.focus` and `pane.focus` move the viewing client
 along with the server's focus. `agent.focus` and `pane.move` change what the
 server calls focused while the client keeps looking at the old tab, which would
