@@ -727,21 +727,24 @@ impl<A: Api> Session<A> {
 mod tests {
     use super::*;
     use crate::client::fake::FakeApi;
-    use crate::resume::temp_store;
+    use crate::resume::{TempDir, temp_store};
 
     const SOCKET: &str = "/run/herdr/test.sock";
 
     /// A session opened on pane `p1` of tab `t1` in space `w1`, with its
-    /// hop note in a temp dir named after the test.
-    fn session(test: &str, api: FakeApi) -> Session<FakeApi> {
-        Session::new(
+    /// hop note in a temp dir named after the test. The dir lives as long
+    /// as the guard, so keep it in scope next to the session.
+    fn session(test: &str, api: FakeApi) -> (TempDir, Session<FakeApi>) {
+        let (dir, store) = temp_store(test, SOCKET);
+        let session = Session::new(
             api,
-            temp_store(test, SOCKET),
+            store,
             "herdr-modes".into(),
             "w1".into(),
             "t1".into(),
             "p1".into(),
-        )
+        );
+        (dir, session)
     }
 
     fn agents(rows: &[(&str, &str)]) -> Value {
@@ -772,7 +775,7 @@ mod tests {
     #[test]
     fn focus_agent_from_an_agent_row_records_where_it_came_from() {
         let api = FakeApi::new().reply("agent.list", agents(&[("p1", "idle"), ("p2", "done")]));
-        let mut s = session("focus_agent_from_agent", api);
+        let (_dir, mut s) = session("focus_agent_from_agent", api);
 
         let line = s.execute(Action::GotoAgent(2), no_prompt).unwrap();
 
@@ -792,7 +795,7 @@ mod tests {
     #[test]
     fn focus_agent_from_a_plain_pane_records_no_previous_agent() {
         let api = FakeApi::new().reply("agent.list", agents(&[("p2", "blocked")]));
-        let mut s = session("focus_agent_from_plain_pane", api);
+        let (_dir, mut s) = session("focus_agent_from_plain_pane", api);
 
         s.execute(Action::NextAgent, no_prompt).unwrap();
 
@@ -811,7 +814,7 @@ mod tests {
 
     #[test]
     fn break_pane_to_a_new_tab_moves_then_brings_the_client_along() {
-        let mut s = session("break_pane_new", FakeApi::new());
+        let (_dir, mut s) = session("break_pane_new", FakeApi::new());
 
         let line = s
             .execute(Action::BreakPane(BreakTo::New), no_prompt)
@@ -837,7 +840,7 @@ mod tests {
 
     #[test]
     fn closing_the_tab_always_takes_the_owner_tab_away() {
-        let mut s = session("will_close_close_tab", FakeApi::new());
+        let (_dir, mut s) = session("will_close_close_tab", FakeApi::new());
         assert!(s.will_close_owner_tab(Action::CloseTab).unwrap());
         assert!(s.api.calls().is_empty());
     }
@@ -845,7 +848,7 @@ mod tests {
     #[test]
     fn closing_the_last_pane_takes_the_owner_tab_away() {
         let api = FakeApi::new().reply("pane.list", panes(&[("p1", "t1"), ("p9", "t2")]));
-        let mut s = session("will_close_last_pane", api);
+        let (_dir, mut s) = session("will_close_last_pane", api);
         assert!(s.will_close_owner_tab(Action::ClosePane).unwrap());
         assert_eq!(
             s.api.calls(),
@@ -856,13 +859,13 @@ mod tests {
     #[test]
     fn closing_one_of_two_panes_keeps_the_owner_tab() {
         let api = FakeApi::new().reply("pane.list", panes(&[("p1", "t1"), ("p2", "t1")]));
-        let mut s = session("will_close_one_of_two", api);
+        let (_dir, mut s) = session("will_close_one_of_two", api);
         assert!(!s.will_close_owner_tab(Action::ClosePane).unwrap());
     }
 
     #[test]
     fn other_actions_never_take_the_owner_tab_away() {
-        let mut s = session("will_close_other", FakeApi::new());
+        let (_dir, mut s) = session("will_close_other", FakeApi::new());
         assert!(!s.will_close_owner_tab(Action::NextTab).unwrap());
         assert!(!s.will_close_owner_tab(Action::Zoom).unwrap());
         assert!(s.api.calls().is_empty());
@@ -870,7 +873,7 @@ mod tests {
 
     #[test]
     fn arm_hop_leaves_a_note_and_invokes_the_open_action() {
-        let mut s = session("arm_hop_ok", FakeApi::new());
+        let (_dir, mut s) = session("arm_hop_ok", FakeApi::new());
         s.prev_tab_id = Some("t0".into());
         s.prev_workspace_id = Some("w0".into());
 
@@ -897,7 +900,7 @@ mod tests {
     #[test]
     fn arm_hop_withdraws_the_note_when_the_invoke_fails() {
         let api = FakeApi::new().fail("plugin.action.invoke", "not_found", "no such action");
-        let mut s = session("arm_hop_fail", api);
+        let (_dir, mut s) = session("arm_hop_fail", api);
 
         let err = s.arm_hop("tab", "").unwrap_err();
 
@@ -908,7 +911,7 @@ mod tests {
 
     #[test]
     fn disarm_hop_removes_the_note() {
-        let mut s = session("disarm_hop", FakeApi::new());
+        let (_dir, mut s) = session("disarm_hop", FakeApi::new());
         s.arm_hop("tab", "").unwrap();
         assert!(s.store.still_pending());
         s.disarm_hop();
@@ -917,14 +920,14 @@ mod tests {
 
     #[test]
     fn cancel_at_the_origin_pane_does_nothing() {
-        let mut s = session("cancel_at_origin", FakeApi::new());
+        let (_dir, mut s) = session("cancel_at_origin", FakeApi::new());
         assert_eq!(s.execute(Action::Cancel, no_prompt).unwrap(), "");
         assert!(s.api.calls().is_empty());
     }
 
     #[test]
     fn cancel_elsewhere_goes_back_to_the_origin() {
-        let mut s = session("cancel_elsewhere", FakeApi::new());
+        let (_dir, mut s) = session("cancel_elsewhere", FakeApi::new());
         s.workspace_id = "w2".into();
         s.tab_id = "t5".into();
         s.pane_id = "p7".into();
@@ -947,7 +950,7 @@ mod tests {
     #[test]
     fn step_tab_wraps_from_the_last_tab_to_the_first() {
         let api = FakeApi::new().reply("tab.list", tabs(&["ta", "tb", "t1"]));
-        let mut s = session("step_tab_wraps", api);
+        let (_dir, mut s) = session("step_tab_wraps", api);
 
         let line = s.execute(Action::NextTab, no_prompt).unwrap();
 
@@ -976,7 +979,7 @@ mod tests {
             "w9".into(),
             "p9".into(),
         );
-        let mut s = session("restore_resume", FakeApi::new());
+        let (_dir, mut s) = session("restore_resume", FakeApi::new());
 
         s.restore(&note);
         let again = s.resume("pane", "after the hop");
