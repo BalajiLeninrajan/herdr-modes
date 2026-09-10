@@ -39,8 +39,15 @@ impl fmt::Display for Error {
 impl Error {
     /// Opening a popup while one is already up is an expected race, not a fault:
     /// the mode the user asked for is already on screen.
+    ///
+    /// herdr 0.9.0 reports this as code `ui_busy` with a message containing
+    /// "already open". Either one is enough, since the wording may change
+    /// without the code doing so, and vice versa.
     pub fn is_popup_already_open(&self) -> bool {
-        matches!(self, Error::Api { message, .. } if message.contains("already open"))
+        matches!(
+            self,
+            Error::Api { code, message } if code == "ui_busy" || message.contains("already open")
+        )
     }
 }
 
