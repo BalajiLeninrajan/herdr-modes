@@ -189,6 +189,10 @@ fn run(mode_name: &str) -> Result<(), client::Error> {
             .unwrap_or_default()
             .to_string(),
     );
+    // The context is a snapshot from when the open was requested, and it may
+    // not name a tab at all. The popup is tied to whatever tab the server has
+    // focused now, so read that back before deciding what counts as leaving.
+    session.refresh()?;
 
     // Surface config problems where they will actually be seen, then let the
     // mode carry on with whatever did parse.
@@ -200,9 +204,6 @@ fn run(mode_name: &str) -> Result<(), client::Error> {
 
     if let Some(r) = Resume::from_env() {
         session.restore(&r);
-        // The context was taken when the open was requested; focus has had
-        // time to settle since, and it is what this popup is now tied to.
-        session.refresh()?;
         // The popup is tied to the server's active tab, but the client may
         // still be looking elsewhere (herdr 0.9.0 only moves the client for
         // explicit focus calls, and a tab that just closed under it lands
