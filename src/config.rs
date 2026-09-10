@@ -52,7 +52,10 @@ enum BindingConfig {
     /// `h = "focus_left"`, or `h = ""` to unbind.
     Action(String),
     /// `h = { action = "focus_left", sticky = true }`
-    Full { action: String, sticky: Option<bool> },
+    Full {
+        action: String,
+        sticky: Option<bool>,
+    },
 }
 
 pub fn config_path() -> Option<PathBuf> {
@@ -88,7 +91,9 @@ pub fn load() -> (HashMap<String, Mode>, Vec<String>) {
     for name in names {
         let cfg = file.modes.get(name);
         let mut mode = Mode {
-            label: cfg.and_then(|c| c.label.clone()).unwrap_or_else(|| name.to_uppercase()),
+            label: cfg
+                .and_then(|c| c.label.clone())
+                .unwrap_or_else(|| name.to_uppercase()),
             hint: cfg.and_then(|c| c.hint.clone()),
             keys: Vec::new(),
         };
@@ -113,7 +118,9 @@ pub fn load() -> (HashMap<String, Mode>, Vec<String>) {
                     BindingConfig::Action(a) => (a.as_str(), None),
                     BindingConfig::Full { action, sticky } => (action.as_str(), *sticky),
                 };
-                let Some(spec) = parse_key(key, name, &mut warnings) else { continue };
+                let Some(spec) = parse_key(key, name, &mut warnings) else {
+                    continue;
+                };
                 // `key = ""` unbinds.
                 match action.is_empty() {
                     true => mode.unbind(spec),
@@ -160,5 +167,11 @@ fn insert(
     };
     // Nothing is sticky unless the binding asks for it: one keystroke, then
     // the mode closes.
-    mode.bind(spec, Binding { action, sticky: sticky.unwrap_or(false) });
+    mode.bind(
+        spec,
+        Binding {
+            action,
+            sticky: sticky.unwrap_or(false),
+        },
+    );
 }

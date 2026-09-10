@@ -9,7 +9,11 @@ use crossterm::{cursor, execute, queue};
 use std::io::{Stdout, Write};
 
 /// Catppuccin mocha mauve, matching `ui.accent` in the herdr config.
-const ACCENT: Color = Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 };
+const ACCENT: Color = Color::Rgb {
+    r: 0xcb,
+    g: 0xa6,
+    b: 0xf7,
+};
 
 const FEEDBACK_ROW: u16 = 1;
 
