@@ -8,17 +8,12 @@ use crossterm::terminal::{Clear, ClearType};
 use crossterm::{cursor, execute, queue};
 use std::io::{Stdout, Write};
 
-/// Catppuccin mocha mauve, matching `ui.accent` in the herdr config.
-const ACCENT: Color = Color::Rgb {
-    r: 0xcb,
-    g: 0xa6,
-    b: 0xf7,
-};
-
 const FEEDBACK_ROW: u16 = 1;
 
+/// `accent` colours the label; it comes from `[ui] accent` in the config.
 pub fn render(
     out: &mut Stdout,
+    accent: Color,
     label: &str,
     hint: Option<&str>,
     feedback: &str,
@@ -29,7 +24,7 @@ pub fn render(
             out,
             cursor::MoveTo(0, 0),
             Clear(ClearType::CurrentLine),
-            SetForegroundColor(ACCENT),
+            SetForegroundColor(accent),
             SetAttribute(Attribute::Bold),
             Print(format!(" {label} ")),
             SetAttribute(Attribute::Reset),
