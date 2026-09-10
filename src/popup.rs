@@ -53,18 +53,19 @@ impl Popup {
         )
     }
 
-    /// Block for the next key press. `None` once the terminal can no longer
-    /// be read, which is the popup being torn down under us.
-    pub fn next_key(&mut self) -> Option<KeyEvent> {
+    /// Block for the next key press. Errors once the terminal can no longer
+    /// be read, which is the popup being torn down under us; the caller
+    /// decides whether that is worth reporting.
+    pub fn next_key(&mut self) -> std::io::Result<KeyEvent> {
         loop {
-            let key = match event::read().ok()? {
+            let key = match event::read()? {
                 Event::Key(key) => key,
                 _ => continue,
             };
             // With the kitty keyboard protocol active, releases are reported
             // too; acting on them would fire every binding twice.
             if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
-                return Some(key);
+                return Ok(key);
             }
         }
     }
@@ -75,7 +76,7 @@ impl Popup {
         let mut buf = String::new();
         loop {
             hint::draw_prompt(&mut self.out, label, &buf).ok()?;
-            let key = self.next_key()?;
+            let key = self.next_key().ok()?;
             match key.code {
                 KeyCode::Enter => return Some(buf),
                 KeyCode::Esc => return None,

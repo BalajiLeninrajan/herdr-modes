@@ -210,9 +210,7 @@ fn run(mode_name: &str) -> Result<(), client::Error> {
     let mut popup = Popup::open(ui.accent, &mode.label, mode.hint_text())?;
     loop {
         popup.render(&feedback)?;
-        let Some(key) = popup.next_key() else {
-            break;
-        };
+        let key = popup.next_key()?;
         match driver.step(&key, &feedback, |label| popup.prompt(label)) {
             Outcome::Continue(line) => feedback = line,
             Outcome::Exit | Outcome::Hop => break,
