@@ -119,8 +119,12 @@ fn check(path: Option<&Path>) -> ExitCode {
     }
 }
 
+fn plugin_id() -> String {
+    std::env::var("HERDR_PLUGIN_ID").unwrap_or_else(|_| "herdr-modes".to_string())
+}
+
 fn open(entrypoint: &str) -> Result<(), client::Error> {
-    let plugin_id = std::env::var("HERDR_PLUGIN_ID").unwrap_or_else(|_| "herdr-modes".to_string());
+    let plugin_id = plugin_id();
     let mut c = Client::connect()?;
     let store = Store::from_env();
 
@@ -201,6 +205,7 @@ fn run(mode_name: &str) -> Result<(), client::Error> {
     let mut session = modes::Session::new(
         client,
         Store::from_env(),
+        plugin_id(),
         ctx["workspace_id"].as_str().unwrap_or_default().to_string(),
         ctx["tab_id"].as_str().unwrap_or_default().to_string(),
         ctx["focused_pane_id"]
