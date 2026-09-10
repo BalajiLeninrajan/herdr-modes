@@ -1,8 +1,9 @@
-//! herdr-modes — zellij-style sticky modes for herdr.
+//! herdr-modes: zellij-style sticky modes for herdr.
 //!
 //! `open <mode>` runs as a plugin action and opens the modal popup.
 //! `run <mode>` runs inside that popup and owns the key loop.
 //! `check [path]` validates the config and prints the resolved keymaps.
+//! `check --actions` prints the action table.
 //!
 //! Actions run detached without a TTY, so the action -> pane hop is required;
 //! it costs one round trip on mode entry only.
@@ -18,6 +19,7 @@ mod resume;
 mod run;
 
 use client::Client;
+use keymap::{ACTIONS, Group};
 use modes::Session;
 use popup::Popup;
 use resume::{Resume, Store};
@@ -39,10 +41,21 @@ fn main() -> ExitCode {
     let sub = args.get(1).map(String::as_str);
 
     match sub {
-        Some("check") => return check(args.get(2).map(Path::new)),
+        Some("check") => {
+            return match (args.get(2).map(String::as_str), args.get(3)) {
+                (Some("--actions"), None) => list_actions(),
+                (path, None) => check(path.map(Path::new)),
+                _ => {
+                    eprintln!("usage: herdr-modes check [path | --actions]");
+                    ExitCode::from(2)
+                }
+            };
+        }
         Some("open") | Some("run") => {}
         _ => {
-            eprintln!("usage: herdr-modes <open|run> <mode> | herdr-modes check [path]");
+            eprintln!(
+                "usage: herdr-modes <open|run> <mode> | herdr-modes check [path | --actions]"
+            );
             return ExitCode::from(2);
         }
     }
@@ -117,6 +130,30 @@ fn check(path: Option<&Path>) -> ExitCode {
         }
         ExitCode::FAILURE
     }
+}
+
+/// Print the action table grouped by mode: each name with its hint label and
+/// whether it can leave the tab, which is what makes a sticky binding hop.
+fn list_actions() -> ExitCode {
+    for group in Group::ALL {
+        println!("[{}]", group.as_str());
+        for spec in ACTIONS.iter().filter(|s| s.group == group) {
+            let name = if spec.takes_digit() {
+                format!("{} (bind to 1-9)", spec.name)
+            } else {
+                spec.name.to_string()
+            };
+            let tab = if spec.leaves_tab {
+                "may land on another tab, so a sticky binding hops"
+            } else if matches!(spec.name, "close_tab" | "close_pane") {
+                "can close the popup's own tab, so the hop is armed first"
+            } else {
+                "stays on its tab"
+            };
+            println!("  {name:<28} {:<10} {tab}", spec.label);
+        }
+    }
+    ExitCode::SUCCESS
 }
 
 fn plugin_id() -> String {

@@ -3,7 +3,7 @@
 //! Since herdr 0.9.0 a popup belongs to the tab it opened on: the client
 //! draws it and routes keys to it only while that tab is the one on screen.
 //! Any action that lands on another tab (or space) therefore strands the
-//! popup — alive, invisible, deaf. The way through is to let this popup die
+//! popup: alive, invisible, deaf. The way through is to let this popup die
 //! and have a fresh one open on the new tab.
 //!
 //! The popup cannot reopen itself: a popup is a singleton, and herdr kills

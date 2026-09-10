@@ -6,6 +6,20 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+### Added
+
+- `[ui] accent` in the plugin config sets the hint bar colour, as a hex value or a crossterm colour name.
+- `herdr-modes check <path>` validates any keymap file, not only the installed one.
+- `herdr-modes check --actions` prints every action with its hint label and whether it can leave the tab.
+- CI runs fmt, clippy, tests, a release build and `check config.example.toml` on Linux and macOS.
+
+### Changed
+
+- The hint bar defaults to the terminal's magenta instead of a fixed hex colour.
+- Both hint bar rows are clipped to the popup width so a long legend never wraps into the feedback row.
+- Mode entry reads focus from the server before choosing the tab the popup belongs to.
+- `open` treats herdr's `ui_busy` error code, as well as its message, as "a popup is already open".
+
 ### Fixed
 
 - The hop note records the herdr socket it was written for, so an `open` under another herdr session no longer picks it up or deletes it while it is fresh.

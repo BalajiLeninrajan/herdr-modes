@@ -26,7 +26,7 @@ impl Dir {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 /// Where `break_pane_*` sends the pane.
 pub enum BreakTo {
     New,
@@ -34,7 +34,7 @@ pub enum BreakTo {
     Next,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Action {
     Focus(Dir),
     CycleFocus,
@@ -78,121 +78,206 @@ pub enum Action {
     Quit,
 }
 
-impl Action {
-    /// Parse a config action name. `key` is needed because the `goto_*` actions
-    /// take their index from the key they are bound to.
-    pub fn parse(name: &str, key: &KeySpec) -> Result<Action, String> {
-        let a = match name {
-            "focus_left" => Action::Focus(Dir::Left),
-            "focus_right" => Action::Focus(Dir::Right),
-            "focus_up" => Action::Focus(Dir::Up),
-            "focus_down" => Action::Focus(Dir::Down),
-            "cycle_focus" => Action::CycleFocus,
-            "close_pane" => Action::ClosePane,
-            "split_right" => Action::Split("right"),
-            "split_down" => Action::Split("down"),
-            "zoom" => Action::Zoom,
-            "rename_pane" => Action::RenamePane,
+/// The mode an action is documented under. Modes are only namespaces for a
+/// keymap, so this says where the action is listed, not where it may be bound.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Group {
+    Pane,
+    Tab,
+    Move,
+    Agent,
+    Space,
+    Any,
+}
 
-            "prev_tab" => Action::PrevTab,
-            "next_tab" => Action::NextTab,
-            "last_tab" => Action::LastTab,
-            "new_tab" => Action::NewTab,
-            "close_tab" => Action::CloseTab,
-            "rename_tab" => Action::RenameTab,
-            "move_tab_left" => Action::MoveTab(-1),
-            "move_tab_right" => Action::MoveTab(1),
-            "break_pane_new" => Action::BreakPane(BreakTo::New),
-            "break_pane_prev" => Action::BreakPane(BreakTo::Prev),
-            "break_pane_next" => Action::BreakPane(BreakTo::Next),
-            "goto_tab" => Action::GotoTab(digit(name, key)?),
+impl Group {
+    /// In the order the docs list them.
+    pub const ALL: [Group; 6] = [
+        Group::Pane,
+        Group::Tab,
+        Group::Move,
+        Group::Agent,
+        Group::Space,
+        Group::Any,
+    ];
 
-            "swap_left" => Action::Swap(Dir::Left),
-            "swap_right" => Action::Swap(Dir::Right),
-            "swap_up" => Action::Swap(Dir::Up),
-            "swap_down" => Action::Swap(Dir::Down),
-            "swap_forward" => Action::SwapCycle(true),
-            "swap_backward" => Action::SwapCycle(false),
-
-            "prev_agent" => Action::PrevAgent,
-            "next_agent" => Action::NextAgent,
-            "last_agent" => Action::LastAgent,
-            "goto_agent" => Action::GotoAgent(digit(name, key)?),
-            "next_attention" => Action::NextAttention,
-            "prev_attention" => Action::PrevAttention,
-
-            "prev_space" => Action::PrevSpace,
-            "next_space" => Action::NextSpace,
-            "last_space" => Action::LastSpace,
-            "goto_space" => Action::GotoSpace(digit(name, key)?),
-            "next_space_attention" => Action::NextSpaceAttention,
-            "prev_space_attention" => Action::PrevSpaceAttention,
-
-            "cancel" => Action::Cancel,
-            "exit" => Action::Quit,
-            other => return Err(format!("unknown action `{other}`")),
-        };
-        Ok(a)
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Group::Pane => "pane",
+            Group::Tab => "tab",
+            Group::Move => "move",
+            Group::Agent => "agent",
+            Group::Space => "space",
+            Group::Any => "any",
+        }
     }
+}
 
+/// How a name becomes an `Action`. Most names are one fixed variant; the
+/// `goto_*` names take their index from the digit key they are bound to.
+#[derive(Clone, Copy)]
+pub enum Build {
+    Plain(Action),
+    Digit(fn(usize) -> Action),
+}
+
+/// One row of the action table: everything the config parser, the hint bar,
+/// the hop check and the docs need to know about a name.
+pub struct ActionSpec {
+    pub name: &'static str,
+    pub group: Group,
+    /// Short label for the auto-generated hint bar. Directional variants
+    /// share a label so their keys collapse into one group ("hjkl focus").
+    pub label: &'static str,
     /// Whether the action can land the view on a different tab. Since herdr
     /// 0.9.0 a popup is tied to the tab it opened on, so after one of these
     /// the popup has to hop (see `resume`). Pane-level moves within a tab
     /// never need it, which keeps `hjkl` drumming at one round trip.
-    pub fn may_leave_tab(self) -> bool {
-        matches!(
-            self,
-            Action::PrevTab
-                | Action::NextTab
-                | Action::LastTab
-                | Action::GotoTab(_)
-                | Action::NewTab
-                | Action::BreakPane(_)
-                | Action::PrevAgent
-                | Action::NextAgent
-                | Action::LastAgent
-                | Action::GotoAgent(_)
-                | Action::NextAttention
-                | Action::PrevAttention
-                | Action::PrevSpace
-                | Action::NextSpace
-                | Action::LastSpace
-                | Action::GotoSpace(_)
-                | Action::NextSpaceAttention
-                | Action::PrevSpaceAttention
-        )
+    pub leaves_tab: bool,
+    pub build: Build,
+}
+
+impl ActionSpec {
+    /// Build the action for a binding. `key` matters only for the `goto_*`
+    /// names, which read their index from it.
+    pub fn action(&self, key: &KeySpec) -> Result<Action, String> {
+        match self.build {
+            Build::Plain(a) => Ok(a),
+            Build::Digit(f) => Ok(f(digit(self.name, key)?)),
+        }
     }
 
-    /// Short label for the auto-generated hint bar. Directional variants share
-    /// a label so their keys collapse into one group ("hjkl focus").
-    pub fn hint_label(self) -> &'static str {
-        match self {
-            Action::Focus(_) => "focus",
-            Action::CycleFocus => "cycle",
-            Action::ClosePane => "close",
-            Action::Split(_) => "split",
-            Action::Zoom => "zoom",
-            Action::RenamePane => "rename",
-            Action::PrevTab | Action::NextTab => "switch",
-            Action::LastTab => "last",
-            Action::GotoTab(_) => "goto",
-            Action::NewTab => "new",
-            Action::CloseTab => "close",
-            Action::RenameTab => "rename",
-            Action::MoveTab(_) => "move",
-            Action::BreakPane(_) => "break",
-            Action::Swap(_) | Action::SwapCycle(_) => "swap",
-            Action::PrevAgent | Action::NextAgent => "agent",
-            Action::LastAgent => "last",
-            Action::GotoAgent(_) => "goto",
-            Action::NextAttention | Action::PrevAttention => "attention",
-            Action::PrevSpace | Action::NextSpace => "space",
-            Action::LastSpace => "last",
-            Action::GotoSpace(_) => "goto",
-            Action::NextSpaceAttention | Action::PrevSpaceAttention => "attention",
-            Action::Cancel => "cancel",
-            Action::Quit => "exit",
+    /// Whether the name must be bound to a digit key.
+    pub fn takes_digit(&self) -> bool {
+        matches!(self.build, Build::Digit(_))
+    }
+
+    /// Whether `action` came from this row. Plain rows compare the whole
+    /// value, so `focus_left` and `focus_right` stay apart; digit rows compare
+    /// the variant, since the digit is the only payload.
+    fn matches(&self, action: Action) -> bool {
+        match self.build {
+            Build::Plain(a) => a == action,
+            Build::Digit(f) => std::mem::discriminant(&f(1)) == std::mem::discriminant(&action),
         }
+    }
+}
+
+const fn act(
+    name: &'static str,
+    group: Group,
+    label: &'static str,
+    leaves_tab: bool,
+    action: Action,
+) -> ActionSpec {
+    ActionSpec {
+        name,
+        group,
+        label,
+        leaves_tab,
+        build: Build::Plain(action),
+    }
+}
+
+const fn goto(
+    name: &'static str,
+    group: Group,
+    label: &'static str,
+    leaves_tab: bool,
+    action: fn(usize) -> Action,
+) -> ActionSpec {
+    ActionSpec {
+        name,
+        group,
+        label,
+        leaves_tab,
+        build: Build::Digit(action),
+    }
+}
+
+/// Every action a config may name. `Action::parse`, the hint bar, the hop
+/// check, `check --actions` and the tests against README.md and
+/// config.example.toml all read this table, so a new action is one row here
+/// plus a mention in those two files.
+#[rustfmt::skip]
+pub const ACTIONS: &[ActionSpec] = &[
+    act("focus_left", Group::Pane, "focus", false, Action::Focus(Dir::Left)),
+    act("focus_right", Group::Pane, "focus", false, Action::Focus(Dir::Right)),
+    act("focus_up", Group::Pane, "focus", false, Action::Focus(Dir::Up)),
+    act("focus_down", Group::Pane, "focus", false, Action::Focus(Dir::Down)),
+    act("cycle_focus", Group::Pane, "cycle", false, Action::CycleFocus),
+    act("close_pane", Group::Pane, "close", false, Action::ClosePane),
+    act("split_right", Group::Pane, "split", false, Action::Split("right")),
+    act("split_down", Group::Pane, "split", false, Action::Split("down")),
+    act("zoom", Group::Pane, "zoom", false, Action::Zoom),
+    act("rename_pane", Group::Pane, "rename", false, Action::RenamePane),
+
+    act("prev_tab", Group::Tab, "switch", true, Action::PrevTab),
+    act("next_tab", Group::Tab, "switch", true, Action::NextTab),
+    act("last_tab", Group::Tab, "last", true, Action::LastTab),
+    goto("goto_tab", Group::Tab, "goto", true, Action::GotoTab),
+    act("new_tab", Group::Tab, "new", true, Action::NewTab),
+    act("close_tab", Group::Tab, "close", false, Action::CloseTab),
+    act("rename_tab", Group::Tab, "rename", false, Action::RenameTab),
+    act("move_tab_left", Group::Tab, "move", false, Action::MoveTab(-1)),
+    act("move_tab_right", Group::Tab, "move", false, Action::MoveTab(1)),
+    act("break_pane_new", Group::Tab, "break", true, Action::BreakPane(BreakTo::New)),
+    act("break_pane_prev", Group::Tab, "break", true, Action::BreakPane(BreakTo::Prev)),
+    act("break_pane_next", Group::Tab, "break", true, Action::BreakPane(BreakTo::Next)),
+
+    act("swap_left", Group::Move, "swap", false, Action::Swap(Dir::Left)),
+    act("swap_right", Group::Move, "swap", false, Action::Swap(Dir::Right)),
+    act("swap_up", Group::Move, "swap", false, Action::Swap(Dir::Up)),
+    act("swap_down", Group::Move, "swap", false, Action::Swap(Dir::Down)),
+    act("swap_forward", Group::Move, "swap", false, Action::SwapCycle(true)),
+    act("swap_backward", Group::Move, "swap", false, Action::SwapCycle(false)),
+
+    act("prev_agent", Group::Agent, "agent", true, Action::PrevAgent),
+    act("next_agent", Group::Agent, "agent", true, Action::NextAgent),
+    act("last_agent", Group::Agent, "last", true, Action::LastAgent),
+    goto("goto_agent", Group::Agent, "goto", true, Action::GotoAgent),
+    act("next_attention", Group::Agent, "attention", true, Action::NextAttention),
+    act("prev_attention", Group::Agent, "attention", true, Action::PrevAttention),
+
+    act("prev_space", Group::Space, "space", true, Action::PrevSpace),
+    act("next_space", Group::Space, "space", true, Action::NextSpace),
+    act("last_space", Group::Space, "last", true, Action::LastSpace),
+    goto("goto_space", Group::Space, "goto", true, Action::GotoSpace),
+    act("next_space_attention", Group::Space, "attention", true, Action::NextSpaceAttention),
+    act("prev_space_attention", Group::Space, "attention", true, Action::PrevSpaceAttention),
+
+    act("exit", Group::Any, "exit", false, Action::Quit),
+    act("cancel", Group::Any, "cancel", false, Action::Cancel),
+];
+
+impl Action {
+    /// Parse a config action name. `key` is needed because the `goto_*` actions
+    /// take their index from the key they are bound to.
+    pub fn parse(name: &str, key: &KeySpec) -> Result<Action, String> {
+        ACTIONS
+            .iter()
+            .find(|s| s.name == name)
+            .ok_or_else(|| format!("unknown action `{name}`"))?
+            .action(key)
+    }
+
+    /// The table row this action came from. A scan over a few dozen rows,
+    /// once per keystroke.
+    pub fn spec(self) -> &'static ActionSpec {
+        ACTIONS
+            .iter()
+            .find(|s| s.matches(self))
+            .expect("every Action variant has a row in ACTIONS")
+    }
+
+    /// See `ActionSpec::leaves_tab`.
+    pub fn may_leave_tab(self) -> bool {
+        self.spec().leaves_tab
+    }
+
+    /// See `ActionSpec::label`.
+    pub fn hint_label(self) -> &'static str {
+        self.spec().label
     }
 }
 
@@ -357,3 +442,188 @@ pub const MODE_NAMES: &[&str] = &["pane", "tab", "move", "agent", "space"];
 /// `shared_except` blocks, so a mode is always escapable before it is
 /// configured. Users can rebind or unbind them per mode like any other key.
 pub const SHARED_EXITS: &[(&str, &str)] = &[("esc", "exit"), ("enter", "exit"), ("ctrl+c", "exit")];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::{BTreeMap, BTreeSet};
+
+    fn key(c: char) -> KeySpec {
+        KeySpec {
+            ctrl: false,
+            key: Key::Char(c),
+        }
+    }
+
+    fn doc(name: &str) -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(name);
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {name}: {e}"))
+    }
+
+    fn table_names() -> BTreeMap<&'static str, BTreeSet<&'static str>> {
+        let mut by_group = BTreeMap::new();
+        for spec in ACTIONS {
+            by_group
+                .entry(spec.group.as_str())
+                .or_insert_with(BTreeSet::new)
+                .insert(spec.name);
+        }
+        by_group
+    }
+
+    fn is_name(token: &str) -> bool {
+        !token.is_empty() && token.chars().all(|c| c.is_ascii_lowercase() || c == '_')
+    }
+
+    #[test]
+    fn names_are_unique() {
+        let names: BTreeSet<_> = ACTIONS.iter().map(|s| s.name).collect();
+        assert_eq!(names.len(), ACTIONS.len());
+    }
+
+    #[test]
+    fn every_name_parses_and_finds_its_own_row() {
+        for spec in ACTIONS {
+            let k = if spec.takes_digit() {
+                key('3')
+            } else {
+                key('h')
+            };
+            let action = Action::parse(spec.name, &k)
+                .unwrap_or_else(|e| panic!("{} did not parse: {e}", spec.name));
+            assert_eq!(action.spec().name, spec.name);
+            assert_eq!(action.hint_label(), spec.label);
+            assert_eq!(action.may_leave_tab(), spec.leaves_tab);
+        }
+    }
+
+    #[test]
+    fn goto_reads_the_digit_and_refuses_other_keys() {
+        assert!(Action::parse("goto_tab", &key('7')).unwrap() == Action::GotoTab(7));
+        assert!(Action::parse("goto_agent", &key('1')).unwrap() == Action::GotoAgent(1));
+        assert!(Action::parse("goto_space", &key('9')).unwrap() == Action::GotoSpace(9));
+        assert!(Action::parse("goto_tab", &key('0')).is_err());
+        assert!(Action::parse("goto_tab", &key('h')).is_err());
+        assert!(Action::parse("goto_nowhere", &key('1')).is_err());
+    }
+
+    #[test]
+    fn the_hop_set_is_unchanged() {
+        let leaving: BTreeSet<_> = ACTIONS
+            .iter()
+            .filter(|s| s.leaves_tab)
+            .map(|s| s.name)
+            .collect();
+        let expected: BTreeSet<_> = [
+            "prev_tab",
+            "next_tab",
+            "last_tab",
+            "goto_tab",
+            "new_tab",
+            "break_pane_new",
+            "break_pane_prev",
+            "break_pane_next",
+            "prev_agent",
+            "next_agent",
+            "last_agent",
+            "goto_agent",
+            "next_attention",
+            "prev_attention",
+            "prev_space",
+            "next_space",
+            "last_space",
+            "goto_space",
+            "next_space_attention",
+            "prev_space_attention",
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(leaving, expected);
+    }
+
+    /// The Keys table in README.md: one row per group, names in backticks.
+    /// Backticked digits in "(bind to `1`-`9`)" are not names and are skipped.
+    #[test]
+    fn readme_keys_table_lists_the_actions() {
+        let readme = doc("README.md");
+        let mut seen: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        for line in readme.lines() {
+            let Some(row) = line.strip_prefix("| ") else {
+                continue;
+            };
+            let Some((group, rest)) = row.split_once(" | ") else {
+                continue;
+            };
+            if !Group::ALL.iter().any(|g| g.as_str() == group) {
+                continue;
+            }
+            let names = rest
+                .split('`')
+                .skip(1)
+                .step_by(2)
+                .filter(|t| is_name(t))
+                .map(str::to_string)
+                .collect();
+            seen.insert(group.to_string(), names);
+        }
+        let expected: BTreeMap<String, BTreeSet<String>> = table_names()
+            .into_iter()
+            .map(|(g, names)| {
+                (
+                    g.to_string(),
+                    names.into_iter().map(str::to_string).collect(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            seen, expected,
+            "README.md Keys table is out of sync with ACTIONS"
+        );
+    }
+
+    /// The trailing "actions" comment block in config.example.toml:
+    /// `# group: name name ...` with continuation lines, up to a bare `#`.
+    #[test]
+    fn example_config_comment_lists_the_actions() {
+        let example = doc("config.example.toml");
+        let block = example
+            .lines()
+            .skip_while(|l| !(l.starts_with("# ") && l.contains(" actions ")))
+            .skip(1)
+            .take_while(|l| l.trim() != "#");
+        let mut seen: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        let mut group = String::new();
+        for line in block {
+            let text = line.trim_start_matches('#');
+            // "(bind to 1-9)" is a hint about the key, not a name.
+            let text = match (text.find('('), text.find(')')) {
+                (Some(a), Some(b)) if a < b => format!("{}{}", &text[..a], &text[b + 1..]),
+                _ => text.to_string(),
+            };
+            for token in text.split_whitespace() {
+                if let Some(g) = token.strip_suffix(':') {
+                    group = g.to_string();
+                } else if is_name(token) {
+                    seen.entry(group.clone())
+                        .or_default()
+                        .insert(token.to_string());
+                } else {
+                    panic!("unexpected token `{token}` in the actions block");
+                }
+            }
+        }
+        let expected: BTreeMap<String, BTreeSet<String>> = table_names()
+            .into_iter()
+            .map(|(g, names)| {
+                (
+                    g.to_string(),
+                    names.into_iter().map(str::to_string).collect(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            seen, expected,
+            "config.example.toml actions block is out of sync with ACTIONS"
+        );
+    }
+}

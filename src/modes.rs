@@ -316,9 +316,9 @@ impl<A: Api> Session<A> {
             self.pane_id = id.to_string();
         }
         if f["changed"].as_bool() == Some(false) {
-            // `no_neighbor` at an edge — report it rather than silently doing nothing.
+            // `no_neighbor` at an edge. Report it rather than silently doing nothing.
             return Ok(format!(
-                "{} — {}",
+                "{} \u{b7} {}",
                 dir.as_str(),
                 f["reason"].as_str().unwrap_or("no change")
             ));
@@ -717,7 +717,7 @@ impl<A: Api> Session<A> {
         let pane = self.origin_pane_id.clone();
         self.api
             .call("workspace.focus", json!({ "workspace_id": workspace }))?;
-        // The pane may be gone — closed from inside the mode — and then the
+        // The pane may be gone, closed from inside the mode, and then the
         // space it lived in is as close to where you were as there is.
         let _ = self.api.call("pane.focus", json!({ "pane_id": pane }));
         self.refresh()?;
