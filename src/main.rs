@@ -20,7 +20,7 @@ use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use crossterm::{cursor, execute};
 use keymap::Action;
-use resume::Resume;
+use resume::{Resume, Store};
 use serde_json::{Value, json};
 use std::io::{Stdout, stdout};
 use std::path::Path;
@@ -122,9 +122,10 @@ fn check(path: Option<&Path>) -> ExitCode {
 fn open(entrypoint: &str) -> Result<(), client::Error> {
     let plugin_id = std::env::var("HERDR_PLUGIN_ID").unwrap_or_else(|_| "herdr-modes".to_string());
     let mut c = Client::connect()?;
+    let store = Store::from_env();
 
     // A note from a popup that just hopped: carry its state into the new one.
-    let resume = Resume::pending(entrypoint);
+    let resume = store.pending(entrypoint);
     let mut params = json!({
         "plugin_id": plugin_id,
         "entrypoint": entrypoint,
@@ -141,7 +142,7 @@ fn open(entrypoint: &str) -> Result<(), client::Error> {
     loop {
         match c.call("plugin.pane.open", params.clone()) {
             Ok(_) => {
-                Resume::clear();
+                store.clear();
                 return Ok(());
             }
             // Only one popup may be open at a time. On a plain keypress that
@@ -152,17 +153,17 @@ fn open(entrypoint: &str) -> Result<(), client::Error> {
                     return Ok(());
                 }
                 // The popup calls a hop off by removing the note.
-                if !Resume::still_pending() {
+                if !store.still_pending() {
                     return Ok(());
                 }
                 if Instant::now() >= deadline {
-                    Resume::clear();
+                    store.clear();
                     return Err(e);
                 }
                 std::thread::sleep(HOP_POLL);
             }
             Err(e) => {
-                Resume::clear();
+                store.clear();
                 return Err(e);
             }
         }
@@ -199,6 +200,7 @@ fn run(mode_name: &str) -> Result<(), client::Error> {
     let client = Client::connect()?;
     let mut session = modes::Session::new(
         client,
+        Store::from_env(),
         ctx["workspace_id"].as_str().unwrap_or_default().to_string(),
         ctx["tab_id"].as_str().unwrap_or_default().to_string(),
         ctx["focused_pane_id"]
@@ -292,7 +294,7 @@ fn run(mode_name: &str) -> Result<(), client::Error> {
             match result {
                 Ok(_) => break,
                 Err(e) => {
-                    Resume::clear();
+                    session.disarm_hop();
                     feedback = format!("error: {e}");
                     continue;
                 }

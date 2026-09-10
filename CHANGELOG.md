@@ -6,6 +6,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+### Fixed
+
+- The hop note records the herdr socket it was written for, so an `open` under another herdr session no longer picks it up or deletes it while it is fresh.
+
 ## 0.2.0 - 2026-09-09
 
 ### Changed

@@ -3,7 +3,7 @@
 use crate::client::{Client, Error};
 use crate::keymap::{Action, BreakTo, Dir};
 use crate::nav;
-use crate::resume::Resume;
+use crate::resume::{Resume, Store};
 use serde_json::{Value, json};
 use std::convert::Infallible;
 use std::fmt;
@@ -84,6 +84,8 @@ struct Space {
 
 pub struct Session {
     pub client: Client,
+    /// Where a hop note is left, and for which herdr session.
+    store: Store,
     pub workspace_id: String,
     pub tab_id: String,
     pub pane_id: String,
@@ -99,9 +101,16 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn new(client: Client, workspace_id: String, tab_id: String, pane_id: String) -> Self {
+    pub fn new(
+        client: Client,
+        store: Store,
+        workspace_id: String,
+        tab_id: String,
+        pane_id: String,
+    ) -> Self {
         Session {
             client,
+            store,
             origin_workspace_id: workspace_id.clone(),
             origin_pane_id: pane_id.clone(),
             workspace_id,
@@ -125,6 +134,7 @@ impl Session {
     fn resume(&self, mode: &str, feedback: &str) -> Resume {
         Resume::new(
             mode,
+            self.store.socket(),
             feedback,
             self.prev_tab_id.clone(),
             self.prev_agent_id.clone(),
@@ -138,7 +148,7 @@ impl Session {
     /// is gone: leave the note, then have herdr run the mode's `open` action.
     /// The caller exits afterwards; the action waits for that.
     pub fn arm_hop(&mut self, mode: &str, feedback: &str) -> Result<(), Error> {
-        self.resume(mode, feedback).write()?;
+        self.store.write(&self.resume(mode, feedback))?;
         let plugin_id =
             std::env::var("HERDR_PLUGIN_ID").unwrap_or_else(|_| "herdr-modes".to_string());
         let r = self.client.call(
@@ -146,9 +156,15 @@ impl Session {
             json!({ "plugin_id": plugin_id, "action_id": mode }),
         );
         if r.is_err() {
-            Resume::clear();
+            self.store.clear();
         }
         r.map(|_| ())
+    }
+
+    /// Call an armed hop off: the action it was armed for failed, so the
+    /// popup is staying and the waiting `open` should stand down.
+    pub fn disarm_hop(&self) {
+        self.store.clear();
     }
 
     /// Put the viewing client on the tab the server (and so this popup) is on.
