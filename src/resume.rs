@@ -156,13 +156,28 @@ impl Store {
         }
     }
 
-    /// Whether the note is still on disk: the popup deletes it to call a hop
-    /// off after the action it was armed for failed.
-    pub fn still_pending(&self) -> bool {
-        self.path.exists()
+    /// Whatever note is on disk, whichever session and mode it is for.
+    fn read(&self) -> Option<Resume> {
+        let text = std::fs::read_to_string(&self.path).ok()?;
+        serde_json::from_str(&text).ok()
     }
 
+    /// Whether this session's note is still on disk: the popup deletes it to
+    /// call a hop off after the action it was armed for failed. A note
+    /// another session wrote in the meantime does not count.
+    pub fn still_pending(&self) -> bool {
+        self.read().is_some_and(|r| r.socket == self.socket)
+    }
+
+    /// Remove the note, unless it is another session's and still fresh: that
+    /// one belongs to an `open` that has not run yet.
     pub fn clear(&self) {
+        if self
+            .read()
+            .is_some_and(|r| r.socket != self.socket && r.fresh())
+        {
+            return;
+        }
         let _ = std::fs::remove_file(&self.path);
     }
 }
@@ -207,9 +222,12 @@ mod tests {
     #[test]
     fn pending_ignores_but_keeps_a_note_for_another_session() {
         let store = temp_store("pending_other_socket", "/run/herdr/a.sock");
-        store.write(&note("tab", "/run/herdr/b.sock")).unwrap();
+        let n = note("tab", "/run/herdr/b.sock");
+        store.write(&n).unwrap();
         assert_eq!(store.pending("tab"), None);
-        assert!(store.still_pending(), "another session's note must survive");
+        assert!(!store.still_pending(), "not this session's note");
+        let theirs = Store::new(store.path.parent().unwrap(), "/run/herdr/b.sock");
+        assert_eq!(theirs.pending("tab"), Some(n), "their note must survive");
     }
 
     #[test]
@@ -245,6 +263,53 @@ mod tests {
         store.clear();
         assert!(!store.still_pending());
         assert_eq!(store.pending("tab"), None);
+    }
+
+    #[test]
+    fn clear_leaves_a_fresh_note_for_another_session() {
+        let store = temp_store("clear_other_socket", "/run/herdr/a.sock");
+        let n = note("tab", "/run/herdr/b.sock");
+        store.write(&n).unwrap();
+        store.clear();
+        assert!(!store.still_pending(), "not this session's note");
+        let theirs = Store::new(store.path.parent().unwrap(), "/run/herdr/b.sock");
+        assert!(theirs.still_pending());
+        assert_eq!(theirs.pending("tab"), Some(n));
+    }
+
+    #[test]
+    fn clear_removes_a_stale_note_for_another_session() {
+        let store = temp_store("clear_other_stale", "/run/herdr/a.sock");
+        let mut n = note("tab", "/run/herdr/b.sock");
+        n.written_unix_ms = now_ms() - FRESH_FOR.as_millis() as u64 - 1;
+        store.write(&n).unwrap();
+        store.clear();
+        assert!(!store.path.exists());
+    }
+
+    #[test]
+    fn clear_removes_an_unreadable_note() {
+        let store = temp_store("clear_garbage", "/run/herdr/a.sock");
+        std::fs::write(&store.path, b"{not json").unwrap();
+        store.clear();
+        assert!(!store.path.exists());
+    }
+
+    /// What `open` does on a plain keypress in session A while session B's
+    /// hop is in flight: find no note of its own, open its popup, clear.
+    /// B's note has to survive that, or B's `open` finds nothing to reopen.
+    #[test]
+    fn a_plain_open_in_another_session_keeps_the_note() {
+        let mine = temp_store("open_other_session", "/run/herdr/a.sock");
+        let theirs = Store::new(mine.path.parent().unwrap(), "/run/herdr/b.sock");
+        let n = note("tab", "/run/herdr/b.sock");
+        theirs.write(&n).unwrap();
+
+        assert_eq!(mine.pending("tab"), None);
+        mine.clear();
+
+        assert!(theirs.still_pending());
+        assert_eq!(theirs.pending("tab"), Some(n));
     }
 
     #[test]
