@@ -196,9 +196,9 @@ const fn goto(
 }
 
 /// Every action a config may name. `Action::parse`, the hint bar, the hop
-/// check and the tests against README.md and config.example.toml all read
-/// this table, so a new action is one row here plus a mention in those two
-/// files.
+/// check, `check --actions` and the tests against README.md and
+/// config.example.toml all read this table, so a new action is one row here
+/// plus a mention in those two files.
 #[rustfmt::skip]
 pub const ACTIONS: &[ActionSpec] = &[
     act("focus_left", Group::Pane, "focus", false, Action::Focus(Dir::Left)),
