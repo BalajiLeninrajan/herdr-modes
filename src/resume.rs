@@ -182,15 +182,27 @@ impl Store {
     }
 }
 
-/// A store in a directory of its own under the system temp dir, empty at
-/// the start of the test. Nothing here touches process-wide environment
-/// variables, so tests can run in parallel.
+/// A directory under the system temp dir that goes away with this value.
 #[cfg(test)]
-pub fn temp_store(test: &str, socket: &str) -> Store {
+pub struct TempDir(PathBuf);
+
+#[cfg(test)]
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// A store in a directory of its own under the system temp dir, empty at
+/// the start of the test and removed when the returned guard drops. Nothing
+/// here touches process-wide environment variables, so tests can run in
+/// parallel.
+#[cfg(test)]
+pub fn temp_store(test: &str, socket: &str) -> (TempDir, Store) {
     let dir = std::env::temp_dir().join(format!("herdr-modes-test-{}-{test}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("create temp dir");
-    Store::new(&dir, socket)
+    (TempDir(dir.clone()), Store::new(&dir, socket))
 }
 
 #[cfg(test)]
@@ -212,7 +224,7 @@ mod tests {
 
     #[test]
     fn pending_returns_a_fresh_note_for_this_session() {
-        let store = temp_store("pending_fresh", "/run/herdr/a.sock");
+        let (_dir, store) = temp_store("pending_fresh", "/run/herdr/a.sock");
         let n = note("tab", "/run/herdr/a.sock");
         store.write(&n).unwrap();
         assert_eq!(store.pending("tab"), Some(n));
@@ -221,18 +233,18 @@ mod tests {
 
     #[test]
     fn pending_ignores_but_keeps_a_note_for_another_session() {
-        let store = temp_store("pending_other_socket", "/run/herdr/a.sock");
+        let (_dir, store) = temp_store("pending_other_socket", "/run/herdr/a.sock");
         let n = note("tab", "/run/herdr/b.sock");
         store.write(&n).unwrap();
         assert_eq!(store.pending("tab"), None);
         assert!(!store.still_pending(), "not this session's note");
-        let theirs = Store::new(store.path.parent().unwrap(), "/run/herdr/b.sock");
+        let theirs = Store::new(&_dir.0, "/run/herdr/b.sock");
         assert_eq!(theirs.pending("tab"), Some(n), "their note must survive");
     }
 
     #[test]
     fn pending_removes_a_stale_note_whatever_its_session() {
-        let store = temp_store("pending_stale", "/run/herdr/a.sock");
+        let (_dir, store) = temp_store("pending_stale", "/run/herdr/a.sock");
         let mut n = note("tab", "/run/herdr/b.sock");
         n.written_unix_ms = now_ms() - FRESH_FOR.as_millis() as u64 - 1;
         store.write(&n).unwrap();
@@ -242,7 +254,7 @@ mod tests {
 
     #[test]
     fn pending_removes_a_note_for_another_mode() {
-        let store = temp_store("pending_other_mode", "/run/herdr/a.sock");
+        let (_dir, store) = temp_store("pending_other_mode", "/run/herdr/a.sock");
         store.write(&note("pane", "/run/herdr/a.sock")).unwrap();
         assert_eq!(store.pending("tab"), None);
         assert!(!store.still_pending());
@@ -250,7 +262,7 @@ mod tests {
 
     #[test]
     fn pending_removes_an_unreadable_note() {
-        let store = temp_store("pending_garbage", "/run/herdr/a.sock");
+        let (_dir, store) = temp_store("pending_garbage", "/run/herdr/a.sock");
         std::fs::write(&store.path, b"{not json").unwrap();
         assert_eq!(store.pending("tab"), None);
         assert!(!store.still_pending());
@@ -258,7 +270,7 @@ mod tests {
 
     #[test]
     fn clear_removes_the_note() {
-        let store = temp_store("clear", "/run/herdr/a.sock");
+        let (_dir, store) = temp_store("clear", "/run/herdr/a.sock");
         store.write(&note("tab", "/run/herdr/a.sock")).unwrap();
         store.clear();
         assert!(!store.still_pending());
@@ -267,19 +279,19 @@ mod tests {
 
     #[test]
     fn clear_leaves_a_fresh_note_for_another_session() {
-        let store = temp_store("clear_other_socket", "/run/herdr/a.sock");
+        let (_dir, store) = temp_store("clear_other_socket", "/run/herdr/a.sock");
         let n = note("tab", "/run/herdr/b.sock");
         store.write(&n).unwrap();
         store.clear();
         assert!(!store.still_pending(), "not this session's note");
-        let theirs = Store::new(store.path.parent().unwrap(), "/run/herdr/b.sock");
+        let theirs = Store::new(&_dir.0, "/run/herdr/b.sock");
         assert!(theirs.still_pending());
         assert_eq!(theirs.pending("tab"), Some(n));
     }
 
     #[test]
     fn clear_removes_a_stale_note_for_another_session() {
-        let store = temp_store("clear_other_stale", "/run/herdr/a.sock");
+        let (_dir, store) = temp_store("clear_other_stale", "/run/herdr/a.sock");
         let mut n = note("tab", "/run/herdr/b.sock");
         n.written_unix_ms = now_ms() - FRESH_FOR.as_millis() as u64 - 1;
         store.write(&n).unwrap();
@@ -289,7 +301,7 @@ mod tests {
 
     #[test]
     fn clear_removes_an_unreadable_note() {
-        let store = temp_store("clear_garbage", "/run/herdr/a.sock");
+        let (_dir, store) = temp_store("clear_garbage", "/run/herdr/a.sock");
         std::fs::write(&store.path, b"{not json").unwrap();
         store.clear();
         assert!(!store.path.exists());
@@ -300,8 +312,8 @@ mod tests {
     /// B's note has to survive that, or B's `open` finds nothing to reopen.
     #[test]
     fn a_plain_open_in_another_session_keeps_the_note() {
-        let mine = temp_store("open_other_session", "/run/herdr/a.sock");
-        let theirs = Store::new(mine.path.parent().unwrap(), "/run/herdr/b.sock");
+        let (_dir, mine) = temp_store("open_other_session", "/run/herdr/a.sock");
+        let theirs = Store::new(&_dir.0, "/run/herdr/b.sock");
         let n = note("tab", "/run/herdr/b.sock");
         theirs.write(&n).unwrap();
 
