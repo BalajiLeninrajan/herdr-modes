@@ -1,7 +1,7 @@
 //! Executes a keymap Action against the herdr socket API.
 
 use crate::client::{Client, Error};
-use crate::keymap::{Action, BreakTarget, Dir};
+use crate::keymap::{Action, BreakTo, Dir};
 use crate::resume::Resume;
 use serde_json::{Value, json};
 
@@ -398,17 +398,17 @@ impl Session {
         Ok(format!("moved tab -> {}", landed + 1))
     }
 
-    fn break_pane(&mut self, target: BreakTarget) -> Result<String, Error> {
+    fn break_pane(&mut self, target: BreakTo) -> Result<String, Error> {
         let destination = match target {
-            BreakTarget::NewTab => json!({ "type": "new_tab" }),
-            BreakTarget::PrevTab | BreakTarget::NextTab => {
+            BreakTo::New => json!({ "type": "new_tab" }),
+            BreakTo::Prev | BreakTo::Next => {
                 let tabs = self.tabs()?;
                 if tabs.len() < 2 {
                     return Ok("no other tab".into());
                 }
                 let cur = tabs.iter().position(|t| *t == self.tab_id).unwrap_or(0) as i64;
                 let n = tabs.len() as i64;
-                let delta = if matches!(target, BreakTarget::PrevTab) {
+                let delta = if matches!(target, BreakTo::Prev) {
                     -1
                 } else {
                     1
