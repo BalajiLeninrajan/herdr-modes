@@ -6,6 +6,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+### Added
+
+- `herdr-modes check --actions` prints every action with its hint label and whether it can leave the tab.
+
 ### Fixed
 
 - Each herdr session keeps its hop note in its own file, named from a hash of its socket path. Before, every session shared one `resume.json`, so an `open` in one session could pick up or delete another's note, and two sessions hopping close together overwrote each other and lost a mode.

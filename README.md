@@ -211,7 +211,9 @@ that file instead. It reports unknown actions, unparseable keys, misspelt tables
 malformed TOML, exits non-zero
 if anything is wrong, and still applies every binding that did parse, so a typo
 costs you one binding, not the whole keymap. The same warnings appear in the
-mode's feedback row at runtime.
+mode's feedback row at runtime. `herdr-modes check --actions` prints every
+action grouped by mode, with its hint label and whether it can leave the tab
+(a sticky binding of one of those hops, see [Internals](#internals)).
 
 ## Troubleshooting
 
