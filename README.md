@@ -1,33 +1,17 @@
 # herdr-modes
 
-Modal keymaps for [herdr](https://herdr.dev).
+Sticky, user-defined modes for [herdr](https://herdr.dev).
 
-herdr's own keys are one prefix and a flat list of actions. herdr-modes adds
-modes on top: a prefix key opens one, and while it is open every keystroke goes
-to the mode instead of the terminal. Each key runs a herdr action, and the
-binding decides what happens next. A plain binding closes the mode, so it
-behaves like a two-key chord. A sticky binding keeps the mode open, so the
-next key needs no prefix and you can hold a direction down to walk panes,
-tabs, agents or spaces one step per press, with nothing leaking to the shell.
+A mode is a keymap that owns the keyboard until you leave it. Bind any key to
+any herdr action and say whether it acts once or keeps the mode open, so
+`j` `j` `j` walks three panes, tabs, agents or spaces on one prefix press,
+and none of it reaches the shell.
 
-Five modes ship: **pane**, **tab**, **move**, **agent** and **space**. They are
-namespaces, not fixed layouts. Every key in every mode is yours to bind, any
-action can go in any mode, and until you write a config only the exit keys are
-bound. [`config.example.toml`](config.example.toml) is one complete keymap to
-copy or ignore: zellij's layout, with vim-style movement made sticky.
-
-Things the modes can do that flat prefix bindings cannot:
-
-- Step through panes, tabs, agents or spaces without re-pressing the prefix.
-- Jump to the next agent that is blocked on you or has finished, skipping the
-  ones still working.
-- Browse spaces by really switching to them, then cancel back to where you
-  started.
-- Split, zoom, rename, close, swap, reorder and break out panes and tabs from
-  one place, each key as sticky or one-shot as you like.
-
-herdr already has sticky resize, copy and goto modes of its own; this plugin
-covers the rest.
+Five modes ship: **pane**, **tab**, **move**, **agent** and **space**. Agent
+mode can jump straight to the next agent waiting on you. Space mode switches
+spaces as you browse and can cancel back to where you started. Nothing is
+bound until you write a config; [`config.example.toml`](config.example.toml)
+is a complete zellij-shaped keymap to start from.
 
 ## Install
 
