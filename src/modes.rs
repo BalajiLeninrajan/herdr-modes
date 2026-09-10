@@ -122,23 +122,22 @@ impl Session {
     }
 
     fn resume(&self, mode: &str, feedback: &str) -> Resume {
-        Resume {
-            mode: mode.to_string(),
-            written_unix_ms: 0,
-            prev_tab_id: self.prev_tab_id.clone(),
-            prev_agent_id: self.prev_agent_id.clone(),
-            prev_workspace_id: self.prev_workspace_id.clone(),
-            origin_workspace_id: self.origin_workspace_id.clone(),
-            origin_pane_id: self.origin_pane_id.clone(),
-            feedback: feedback.to_string(),
-        }
+        Resume::new(
+            mode,
+            feedback,
+            self.prev_tab_id.clone(),
+            self.prev_agent_id.clone(),
+            self.prev_workspace_id.clone(),
+            self.origin_workspace_id.clone(),
+            self.origin_pane_id.clone(),
+        )
     }
 
     /// Arrange for a fresh popup on whatever tab is on screen once this one
     /// is gone: leave the note, then have herdr run the mode's `open` action.
     /// The caller exits afterwards; the action waits for that.
     pub fn arm_hop(&mut self, mode: &str, feedback: &str) -> Result<(), Error> {
-        self.resume(mode, feedback).stamp().write()?;
+        self.resume(mode, feedback).write()?;
         let plugin_id =
             std::env::var("HERDR_PLUGIN_ID").unwrap_or_else(|_| "herdr-modes".to_string());
         let r = self.client.call(
