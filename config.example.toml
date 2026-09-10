@@ -6,6 +6,11 @@
 # so the keymap below is yours to keep, trim, or replace. It is the zellij set
 # the plugin used to ship as defaults, with movement keys made sticky.
 
+# [ui]
+# accent = "#cba6f7"      # hint-bar label colour: #rrggbb or a crossterm name
+#                         # such as "blue" or "dark_magenta"; defaults to the
+#                         # terminal's magenta
+
 [modes.pane]
 # label = "PANE"          # shown in the hint bar; defaults to the mode name
 # hint  = "custom text"   # defaults to a legend generated from the bindings
