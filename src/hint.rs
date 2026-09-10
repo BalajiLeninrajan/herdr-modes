@@ -76,6 +76,9 @@ fn width() -> Option<usize> {
     crossterm::terminal::size()
         .ok()
         .map(|(cols, _)| usize::from(cols))
+        // Some environments report zero columns rather than failing; treat
+        // that as unknown too, or both rows would be clipped to nothing.
+        .filter(|cols| *cols > 0)
 }
 
 /// `text` unchanged when it fits, or cut to `width` columns ending in "…".

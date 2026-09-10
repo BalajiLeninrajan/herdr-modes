@@ -184,8 +184,9 @@ hide the bar entirely; the mode then shows nothing but its feedback line.
 
 The label is drawn in the terminal's magenta unless a `[ui]` table says
 otherwise. `accent = "#cba6f7"` takes a hex colour, with or without the `#`,
-and `accent = "blue"` takes one of crossterm's colour names (black, red, green,
-yellow, blue, magenta, cyan, white, grey and their `dark_` variants). A value
+and `accent = "blue"` takes one of crossterm's colour names: black, grey,
+dark_grey, white, and red, green, yellow, blue, magenta, cyan with their
+`dark_` variants. A value
 that parses as neither is reported like any other config problem and the
 default stays.
 
