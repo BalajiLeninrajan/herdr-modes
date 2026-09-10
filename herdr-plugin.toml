@@ -2,11 +2,11 @@ id = "herdr-modes"
 name = "Herdr Modes"
 version = "0.2.0"
 min_herdr_version = "0.9.0"
-description = "Zellij-style sticky pane/tab/move/agent modes for herdr"
+description = "Zellij-style sticky modes for herdr"
 platforms = ["macos", "linux"]
 
 # Each action opens the matching modal popup. Actions run detached without a
-# TTY, so they cannot host the key loop themselves — they open a pane that can.
+# TTY, so they cannot host the key loop themselves. They open a pane that can.
 [[actions]]
 id = "pane"
 title = "Pane mode"
