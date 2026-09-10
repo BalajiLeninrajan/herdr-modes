@@ -13,16 +13,14 @@ mod hint;
 mod keymap;
 mod modes;
 mod nav;
+mod popup;
 mod resume;
 
 use client::Client;
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
-use crossterm::{cursor, execute};
 use keymap::Action;
+use popup::Popup;
 use resume::{Resume, Store};
 use serde_json::{Value, json};
-use std::io::{Stdout, stdout};
 use std::path::Path;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
@@ -176,16 +174,6 @@ fn open(entrypoint: &str) -> Result<(), client::Error> {
     }
 }
 
-/// Restores cooked mode even if the loop exits early.
-struct RawGuard;
-
-impl Drop for RawGuard {
-    fn drop(&mut self) {
-        let _ = disable_raw_mode();
-        let _ = execute!(stdout(), cursor::Show);
-    }
-}
-
 fn run(mode_name: &str) -> Result<(), client::Error> {
     let config::Loaded {
         modes,
@@ -244,28 +232,13 @@ fn run(mode_name: &str) -> Result<(), client::Error> {
     // it only while this tab is the one on screen, so leaving it means a hop.
     let owner_tab_id = session.tab_id.clone();
 
-    enable_raw_mode()?;
-    let _guard = RawGuard;
-    let mut out = stdout();
-    let hint_text = mode.hint_text();
+    let mut popup = Popup::open(ui.accent, &mode.label, mode.hint_text())?;
 
     loop {
-        hint::render(
-            &mut out,
-            ui.accent,
-            &mode.label,
-            hint_text.as_deref(),
-            &feedback,
-        )?;
-
-        let Event::Key(key) = event::read()? else {
-            continue;
+        popup.render(&feedback)?;
+        let Some(key) = popup.next_key() else {
+            break;
         };
-        // With the kitty keyboard protocol active, releases are reported too;
-        // acting on them would fire every binding twice.
-        if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
-            continue;
-        }
 
         let Some(binding) = mode.lookup(&key) else {
             feedback = match keymap::KeySpec::from_event(&key) {
@@ -296,7 +269,7 @@ fn run(mode_name: &str) -> Result<(), client::Error> {
             }
         };
 
-        let result = session.execute(binding.action, |label| prompt(&mut out, label));
+        let result = session.execute(binding.action, |label| popup.prompt(label));
         if armed {
             match result {
                 Ok(_) => break,
@@ -333,27 +306,4 @@ fn run(mode_name: &str) -> Result<(), client::Error> {
     }
 
     Ok(())
-}
-
-/// Read a line on the feedback row. Returns None if cancelled.
-fn prompt(out: &mut Stdout, label: &str) -> Option<String> {
-    let mut buf = String::new();
-    loop {
-        hint::draw_prompt(out, label, &buf).ok()?;
-        let Ok(Event::Key(key)) = event::read() else {
-            return None;
-        };
-        if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
-            continue;
-        }
-        match key.code {
-            KeyCode::Enter => return Some(buf),
-            KeyCode::Esc => return None,
-            KeyCode::Backspace => {
-                buf.pop();
-            }
-            KeyCode::Char(c) => buf.push(c),
-            _ => {}
-        }
-    }
 }
