@@ -2,7 +2,7 @@
 //!
 //! `open <mode>` runs as a plugin action and opens the modal popup.
 //! `run <mode>` runs inside that popup and owns the key loop.
-//! `check` validates the config and prints the resolved keymaps.
+//! `check [path]` validates the config and prints the resolved keymaps.
 //!
 //! Actions run detached without a TTY, so the action -> pane hop is required;
 //! it costs one round trip on mode entry only.
@@ -22,6 +22,7 @@ use keymap::Action;
 use resume::Resume;
 use serde_json::{Value, json};
 use std::io::{Stdout, stdout};
+use std::path::Path;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
@@ -37,10 +38,10 @@ fn main() -> ExitCode {
     let sub = args.get(1).map(String::as_str);
 
     match sub {
-        Some("check") => return check(),
+        Some("check") => return check(args.get(2).map(Path::new)),
         Some("open") | Some("run") => {}
         _ => {
-            eprintln!("usage: herdr-modes <open|run> <mode> | herdr-modes check");
+            eprintln!("usage: herdr-modes <open|run> <mode> | herdr-modes check [path]");
             return ExitCode::from(2);
         }
     }
@@ -65,17 +66,26 @@ fn main() -> ExitCode {
 }
 
 /// Validate config and print the resolved keymaps, so a typo is findable
-/// without opening a popup and pressing keys.
-fn check() -> ExitCode {
-    let (modes, warnings) = config::load();
-    match config::config_path() {
-        Some(p) if p.exists() => println!("config: {}", p.display()),
-        Some(p) => println!(
-            "config: {} (not present, only the exits are bound)",
-            p.display()
-        ),
-        None => println!("config: <unresolved>"),
-    }
+/// without opening a popup and pressing keys. With a path, that file is
+/// checked instead of the one in the plugin config dir.
+fn check(path: Option<&Path>) -> ExitCode {
+    let (modes, warnings) = match path {
+        Some(p) => {
+            println!("config: {}", p.display());
+            config::load_from(p)
+        }
+        None => {
+            match config::config_path() {
+                Some(p) if p.exists() => println!("config: {}", p.display()),
+                Some(p) => println!(
+                    "config: {} (not present, only the exits are bound)",
+                    p.display()
+                ),
+                None => println!("config: <unresolved>"),
+            }
+            config::load()
+        }
+    };
     println!();
 
     let mut names: Vec<&String> = modes.keys().collect();

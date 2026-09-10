@@ -66,20 +66,29 @@ pub fn config_path() -> Option<PathBuf> {
     Some(PathBuf::from(home).join(".config/herdr/plugins/config/herdr-modes/config.toml"))
 }
 
-/// Build every mode: defaults, then user overrides. Returns the modes plus any
-/// non-fatal problems, so a typo degrades to "that one binding is ignored"
-/// rather than losing the whole keymap.
+/// Build every mode from the plugin config dir: defaults, then user
+/// overrides. A missing file is not an error; only the exits are bound then.
 pub fn load() -> (HashMap<String, Mode>, Vec<String>) {
+    match config_path().filter(|p| p.exists()) {
+        Some(p) => load_from(&p),
+        None => build(File::default(), Vec::new()),
+    }
+}
+
+/// Build every mode from one TOML file. Returns the modes plus any non-fatal
+/// problems, so a typo degrades to "that one binding is ignored" rather than
+/// losing the whole keymap. An unreadable file is reported the same way and
+/// yields the exits only.
+pub fn load_from(path: &Path) -> (HashMap<String, Mode>, Vec<String>) {
     let mut warnings = Vec::new();
+    let file = read(path).unwrap_or_else(|e| {
+        warnings.push(format!("{}: {e}", path.display()));
+        File::default()
+    });
+    build(file, warnings)
+}
 
-    let file = match config_path().filter(|p| p.exists()) {
-        Some(p) => read(&p).unwrap_or_else(|e| {
-            warnings.push(format!("{}: {e}", p.display()));
-            File::default()
-        }),
-        None => File::default(),
-    };
-
+fn build(file: File, mut warnings: Vec<String>) -> (HashMap<String, Mode>, Vec<String>) {
     // Every built-in mode, plus any the config names, gets built.
     let names: BTreeSet<&str> = MODE_NAMES
         .iter()

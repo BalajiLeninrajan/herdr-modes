@@ -191,9 +191,11 @@ Validate a config and print the resolved keymaps:
 
 ```bash
 herdr-modes check
+herdr-modes check path/to/config.toml
 ```
 
-It reports unknown actions, unparseable keys and malformed TOML, exits non-zero
+Without a path it reads the file in the plugin config dir; with one it checks
+that file instead. It reports unknown actions, unparseable keys and malformed TOML, exits non-zero
 if anything is wrong, and still applies every binding that did parse, so a typo
 costs you one binding, not the whole keymap. The same warnings appear in the
 mode's feedback row at runtime.
