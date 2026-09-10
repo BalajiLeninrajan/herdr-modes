@@ -1,6 +1,6 @@
 # herdr-modes configuration
 # Copy to: ~/.config/herdr/plugins/config/herdr-modes/config.toml
-# Validate with: herdr-modes check
+# Validate with: herdr-modes check config.example.toml
 #
 # Nothing is bound out of the box except the shared exits (esc, enter, ctrl+c),
 # so the keymap below is yours to keep, trim, or replace. It is the zellij set
