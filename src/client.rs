@@ -3,7 +3,7 @@
 //! The wire protocol is one JSON object per line: requests are
 //! `{"id","method","params"}` and responses come back carrying the same `id`.
 //!
-//! The server closes the connection as soon as it has answered a request — it
+//! The server closes the connection as soon as it has answered a request. It
 //! is one request per connection, not a multiplexed channel. (Only
 //! `events.subscribe` holds a connection open.) So each call dials a fresh
 //! socket. That is still far cheaper than shelling out to the `herdr` binary,
