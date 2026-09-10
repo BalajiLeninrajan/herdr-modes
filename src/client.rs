@@ -19,7 +19,10 @@ use std::os::unix::net::UnixStream;
 pub enum Error {
     Io(std::io::Error),
     /// The server understood the request and refused it.
-    Api { code: String, message: String },
+    Api {
+        code: String,
+        message: String,
+    },
     Protocol(String),
 }
 
@@ -90,7 +93,11 @@ impl Client {
             }
             if let Some(err) = v.get("error") {
                 return Err(Error::Api {
-                    code: err.get("code").and_then(Value::as_str).unwrap_or("error").to_string(),
+                    code: err
+                        .get("code")
+                        .and_then(Value::as_str)
+                        .unwrap_or("error")
+                        .to_string(),
                     message: err
                         .get("message")
                         .and_then(Value::as_str)

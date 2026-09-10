@@ -151,7 +151,9 @@ impl Session {
     }
 
     fn tabs(&mut self) -> Result<Vec<String>, Error> {
-        let r = self.client.call("tab.list", json!({ "workspace_id": self.workspace_id }))?;
+        let r = self
+            .client
+            .call("tab.list", json!({ "workspace_id": self.workspace_id }))?;
         Ok(r["tabs"]
             .as_array()
             .map(|a| {
@@ -164,7 +166,9 @@ impl Session {
 
     /// Panes of the current tab, in list order.
     fn tab_panes(&mut self) -> Result<Vec<String>, Error> {
-        let r = self.client.call("pane.list", json!({ "workspace_id": self.workspace_id }))?;
+        let r = self
+            .client
+            .call("pane.list", json!({ "workspace_id": self.workspace_id }))?;
         Ok(r["panes"]
             .as_array()
             .map(|a| {
@@ -197,7 +201,11 @@ impl Session {
         Ok(format!("tab {}/{}", next + 1, n))
     }
 
-    pub fn execute(&mut self, action: Action, prompt: impl FnOnce(&str) -> Option<String>) -> Result<String, Error> {
+    pub fn execute(
+        &mut self,
+        action: Action,
+        prompt: impl FnOnce(&str) -> Option<String>,
+    ) -> Result<String, Error> {
         match action {
             Action::Focus(dir) => self.focus(dir),
             Action::CycleFocus => self.cycle_focus(),
@@ -249,7 +257,11 @@ impl Session {
         }
         if f["changed"].as_bool() == Some(false) {
             // `no_neighbor` at an edge — report it rather than silently doing nothing.
-            return Ok(format!("{} — {}", dir.as_str(), f["reason"].as_str().unwrap_or("no change")));
+            return Ok(format!(
+                "{} — {}",
+                dir.as_str(),
+                f["reason"].as_str().unwrap_or("no change")
+            ));
         }
         Ok(format!("focus {}", dir.as_str()))
     }
@@ -267,7 +279,8 @@ impl Session {
     }
 
     fn close_pane(&mut self) -> Result<String, Error> {
-        self.client.call("pane.close", json!({ "pane_id": self.pane_id }))?;
+        self.client
+            .call("pane.close", json!({ "pane_id": self.pane_id }))?;
         self.refresh()?;
         Ok("closed pane".into())
     }
@@ -284,18 +297,29 @@ impl Session {
     }
 
     fn zoom(&mut self) -> Result<String, Error> {
-        self.client
-            .call("pane.zoom", json!({ "pane_id": self.pane_id, "mode": "toggle" }))?;
+        self.client.call(
+            "pane.zoom",
+            json!({ "pane_id": self.pane_id, "mode": "toggle" }),
+        )?;
         Ok("zoom".into())
     }
 
-    fn rename_pane(&mut self, prompt: impl FnOnce(&str) -> Option<String>) -> Result<String, Error> {
+    fn rename_pane(
+        &mut self,
+        prompt: impl FnOnce(&str) -> Option<String>,
+    ) -> Result<String, Error> {
         let Some(label) = prompt("rename pane: ") else {
             return Ok("cancelled".into());
         };
-        let label: Value = if label.is_empty() { Value::Null } else { Value::String(label) };
-        self.client
-            .call("pane.rename", json!({ "pane_id": self.pane_id, "label": label }))?;
+        let label: Value = if label.is_empty() {
+            Value::Null
+        } else {
+            Value::String(label)
+        };
+        self.client.call(
+            "pane.rename",
+            json!({ "pane_id": self.pane_id, "label": label }),
+        )?;
         Ok("renamed pane".into())
     }
 
@@ -317,14 +341,17 @@ impl Session {
     }
 
     fn new_tab(&mut self) -> Result<String, Error> {
-        self.client
-            .call("tab.create", json!({ "workspace_id": self.workspace_id, "focus": true }))?;
+        self.client.call(
+            "tab.create",
+            json!({ "workspace_id": self.workspace_id, "focus": true }),
+        )?;
         self.refresh()?;
         Ok("new tab".into())
     }
 
     fn close_tab(&mut self) -> Result<String, Error> {
-        self.client.call("tab.close", json!({ "tab_id": self.tab_id }))?;
+        self.client
+            .call("tab.close", json!({ "tab_id": self.tab_id }))?;
         self.prev_tab_id = None;
         self.refresh()?;
         Ok("closed tab".into())
@@ -337,8 +364,10 @@ impl Session {
         if label.is_empty() {
             return Ok("cancelled".into());
         }
-        self.client
-            .call("tab.rename", json!({ "tab_id": self.tab_id, "label": label }))?;
+        self.client.call(
+            "tab.rename",
+            json!({ "tab_id": self.tab_id, "label": label }),
+        )?;
         Ok("renamed tab".into())
     }
 
@@ -354,7 +383,11 @@ impl Session {
             return Ok("only one tab".into());
         }
         let cur = tabs.iter().position(|t| *t == self.tab_id).unwrap_or(0) as i64;
-        let (insert, landed) = if delta > 0 { (cur + 2, cur + 1) } else { (cur - 1, cur - 1) };
+        let (insert, landed) = if delta > 0 {
+            (cur + 2, cur + 1)
+        } else {
+            (cur - 1, cur - 1)
+        };
         if insert < 0 || insert > n {
             return Ok("at end".into());
         }
@@ -375,7 +408,11 @@ impl Session {
                 }
                 let cur = tabs.iter().position(|t| *t == self.tab_id).unwrap_or(0) as i64;
                 let n = tabs.len() as i64;
-                let delta = if matches!(target, BreakTarget::PrevTab) { -1 } else { 1 };
+                let delta = if matches!(target, BreakTarget::PrevTab) {
+                    -1
+                } else {
+                    1
+                };
                 let idx = ((cur + delta) % n + n) % n;
                 json!({ "type": "tab", "tab_id": tabs[idx as usize], "split": "right" })
             }
@@ -413,7 +450,11 @@ impl Session {
             "pane.swap",
             json!({ "source_pane_id": self.pane_id, "target_pane_id": panes[idx as usize] }),
         )?;
-        Ok(if forward { "swap forward".into() } else { "swap back".into() })
+        Ok(if forward {
+            "swap forward".into()
+        } else {
+            "swap back".into()
+        })
     }
 
     fn agents(&mut self) -> Result<Vec<Agent>, Error> {
@@ -452,9 +493,18 @@ impl Session {
         let target = &agents[index];
         let n = agents.len();
         if target.pane_id == self.pane_id {
-            return Ok(format!("{}/{n} {} \u{b7} already here", index + 1, target.label));
+            return Ok(format!(
+                "{}/{n} {} \u{b7} already here",
+                index + 1,
+                target.label
+            ));
         }
-        let line = format!("{}/{n} {} \u{b7} {}", index + 1, target.label, target.status);
+        let line = format!(
+            "{}/{n} {} \u{b7} {}",
+            index + 1,
+            target.label,
+            target.status
+        );
         self.client
             .call("agent.focus", json!({ "target": &target.pane_id }))?;
         if self.agent_at_focus(agents).is_some() {
@@ -462,7 +512,8 @@ impl Session {
         }
         // `agent.focus` moves the server's focus but, on herdr 0.9.0, not the
         // client's view. `pane.focus` is one of the calls the client follows.
-        self.client.call("pane.focus", json!({ "pane_id": &target.pane_id }))?;
+        self.client
+            .call("pane.focus", json!({ "pane_id": &target.pane_id }))?;
         self.refresh()?;
         Ok(line)
     }
@@ -557,12 +608,18 @@ impl Session {
     fn focus_space(&mut self, spaces: &[Space], index: usize) -> Result<String, Error> {
         let target = &spaces[index];
         let n = spaces.len();
-        let line = format!("{}/{n} {} \u{b7} {}", index + 1, target.label, target.status);
+        let line = format!(
+            "{}/{n} {} \u{b7} {}",
+            index + 1,
+            target.label,
+            target.status
+        );
         if target.id == self.workspace_id {
             return Ok(format!("{line} \u{b7} already here"));
         }
         let id = target.id.clone();
-        self.client.call("workspace.focus", json!({ "workspace_id": id.clone() }))?;
+        self.client
+            .call("workspace.focus", json!({ "workspace_id": id.clone() }))?;
         self.prev_workspace_id = Some(std::mem::replace(&mut self.workspace_id, id));
         // The new space brings its own active tab and pane with it.
         self.refresh()?;
@@ -609,7 +666,9 @@ impl Session {
         // Starting off the sidebar puts the search just outside the near end,
         // so the first step lands on that end row instead of skipping it.
         let off_sidebar = if delta > 0 { -1 } else { n };
-        let from = self.space_at_focus(&spaces).map_or(off_sidebar, |i| i as i64);
+        let from = self
+            .space_at_focus(&spaces)
+            .map_or(off_sidebar, |i| i as i64);
         let hit = (1..=n)
             .map(|step| (((from + delta * step) % n + n) % n) as usize)
             .find(|i| spaces[*i].wants_attention());
@@ -627,7 +686,8 @@ impl Session {
         }
         let workspace = self.origin_workspace_id.clone();
         let pane = self.origin_pane_id.clone();
-        self.client.call("workspace.focus", json!({ "workspace_id": workspace }))?;
+        self.client
+            .call("workspace.focus", json!({ "workspace_id": workspace }))?;
         // The pane may be gone — closed from inside the mode — and then the
         // space it lived in is as close to where you were as there is.
         let _ = self.client.call("pane.focus", json!({ "pane_id": pane }));

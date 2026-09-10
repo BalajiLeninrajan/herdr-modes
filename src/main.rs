@@ -70,7 +70,10 @@ fn check() -> ExitCode {
     let (modes, warnings) = config::load();
     match config::config_path() {
         Some(p) if p.exists() => println!("config: {}", p.display()),
-        Some(p) => println!("config: {} (not present, only the exits are bound)", p.display()),
+        Some(p) => println!(
+            "config: {} (not present, only the exits are bound)",
+            p.display()
+        ),
         None => println!("config: <unresolved>"),
     }
     println!();
@@ -79,7 +82,12 @@ fn check() -> ExitCode {
     names.sort();
     for name in names {
         let mode = &modes[name];
-        println!("[{}]  label={}  {} bindings", name, mode.label, mode.keys.len());
+        println!(
+            "[{}]  label={}  {} bindings",
+            name,
+            mode.label,
+            mode.keys.len()
+        );
         match mode.hint_text() {
             Some(h) => println!("  {h}"),
             None => println!("  (hint bar hidden)"),
@@ -161,7 +169,9 @@ impl Drop for RawGuard {
 fn run(mode_name: &str) -> Result<(), client::Error> {
     let (modes, warnings) = config::load();
     let Some(mode) = modes.get(mode_name) else {
-        return Err(client::Error::Protocol(format!("no mode named `{mode_name}`")));
+        return Err(client::Error::Protocol(format!(
+            "no mode named `{mode_name}`"
+        )));
     };
 
     let ctx: Value = std::env::var("HERDR_PLUGIN_CONTEXT_JSON")
@@ -174,7 +184,10 @@ fn run(mode_name: &str) -> Result<(), client::Error> {
         client,
         ctx["workspace_id"].as_str().unwrap_or_default().to_string(),
         ctx["tab_id"].as_str().unwrap_or_default().to_string(),
-        ctx["focused_pane_id"].as_str().unwrap_or_default().to_string(),
+        ctx["focused_pane_id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
     );
 
     // Surface config problems where they will actually be seen, then let the
