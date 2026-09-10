@@ -1,6 +1,6 @@
 //! The hint bar. The popup gives us two interior rows at `height = 4` (which is
 //! also herdr's minimum popup height): row 0 is the key legend, row 1 is
-//! transient feedback. `hint = ""` drops the legend, leaving row 0 blank —
+//! transient feedback. `hint = ""` drops the legend, leaving row 0 blank;
 //! the popup keeps its height either way, since 4 is herdr's floor.
 //!
 //! Both rows are cut to the popup width before drawing. A row that wrapped
