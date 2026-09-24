@@ -1,13 +1,18 @@
 # herdr-modes configuration
 # Copy to: ~/.config/herdr/plugins/config/herdr-modes/config.toml
-# Validate with: herdr-modes check
+# Validate with: ~/.config/herdr/plugins/github/herdr-modes-*/target/release/herdr-modes check config.example.toml
 #
 # Nothing is bound out of the box except the shared exits (esc, enter, ctrl+c),
 # so the keymap below is yours to keep, trim, or replace. It is the zellij set
 # the plugin used to ship as defaults, with movement keys made sticky.
 
+# [ui]
+# accent = "#cba6f7"      # hint-bar label colour: #rrggbb or a crossterm name
+#                         # such as "blue" or "dark_magenta"; defaults to the
+#                         # terminal's magenta
+
 [modes.pane]
-# label = "PANE"          # shown in the hint bar; defaults to the mode name
+# label = "PANE"          # shown in the hint bar; defaults to the mode name in capitals
 # hint  = "custom text"   # defaults to a legend generated from the bindings
 #                         # hint = "" hides the hint bar entirely
 
@@ -63,7 +68,7 @@ p = { action = "swap_backward", sticky = true }
 
 # Agent mode walks herdr's agent panel. `next_attention` skips over the agents
 # that are still working and lands on the next one that is blocked on you or
-# has finished unseen — the panel's attention queue, one keystroke at a time.
+# has finished unseen: the panel's attention queue, one keystroke at a time.
 [modes.agent.keys]
 h = { action = "prev_agent", sticky = true }
 k = { action = "prev_agent", sticky = true }
@@ -87,7 +92,7 @@ A = { action = "prev_attention", sticky = true }
 # Space mode walks the sidebar the same way, and every step is a real focus:
 # the space switches under the popup as you drum, so what you see is the space
 # you would land on. `esc` is rebound to `cancel` here, which puts focus back
-# where the mode opened — browse freely, `enter` keeps where you landed.
+# where the mode opened. Browse freely; `enter` keeps where you landed.
 [modes.space.keys]
 h = { action = "prev_space", sticky = true }
 k = { action = "prev_space", sticky = true }

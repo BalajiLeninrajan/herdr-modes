@@ -1,27 +1,31 @@
-//! herdr-modes — zellij-style sticky modes for herdr.
+//! herdr-modes: zellij-style sticky modes for herdr.
 //!
 //! `open <mode>` runs as a plugin action and opens the modal popup.
 //! `run <mode>` runs inside that popup and owns the key loop.
-//! `check` validates the config and prints the resolved keymaps.
+//! `check [path]` validates the config and prints the resolved keymaps.
+//! `check --actions` prints the action table.
 //!
-//! Actions run detached without a TTY, so the action -> pane hop is required;
-//! it costs one round trip on mode entry only.
+//! Actions run detached without a TTY, so `open` only opens the popup pane
+//! that hosts the key loop.
 
 mod client;
 mod config;
 mod hint;
 mod keymap;
 mod modes;
+mod nav;
+mod popup;
 mod resume;
+mod run;
 
 use client::Client;
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
-use crossterm::{cursor, execute};
-use keymap::Action;
-use resume::Resume;
+use keymap::{ACTIONS, ClosesTab, Group};
+use modes::Session;
+use popup::Popup;
+use resume::{Resume, Store};
+use run::Outcome;
 use serde_json::{Value, json};
-use std::io::{Stdout, stdout};
+use std::path::Path;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
@@ -37,10 +41,24 @@ fn main() -> ExitCode {
     let sub = args.get(1).map(String::as_str);
 
     match sub {
-        Some("check") => return check(),
+        Some("check") => {
+            return match (args.get(2).map(String::as_str), args.get(3)) {
+                (Some("--actions"), None) => list_actions(),
+                // Any other flag, such as --help, is not taken for a path.
+                (path, None) if !path.is_some_and(|p| p.starts_with('-')) => {
+                    check(path.map(Path::new))
+                }
+                _ => {
+                    eprintln!("usage: herdr-modes check [path | --actions]");
+                    ExitCode::from(2)
+                }
+            };
+        }
         Some("open") | Some("run") => {}
         _ => {
-            eprintln!("usage: herdr-modes <open|run> <mode> | herdr-modes check");
+            eprintln!(
+                "usage: herdr-modes <open|run> <mode> | herdr-modes check [path | --actions]"
+            );
             return ExitCode::from(2);
         }
     }
@@ -65,21 +83,40 @@ fn main() -> ExitCode {
 }
 
 /// Validate config and print the resolved keymaps, so a typo is findable
-/// without opening a popup and pressing keys.
-fn check() -> ExitCode {
-    let (modes, warnings) = config::load();
-    match config::config_path() {
-        Some(p) if p.exists() => println!("config: {}", p.display()),
-        Some(p) => println!("config: {} (not present, only the exits are bound)", p.display()),
-        None => println!("config: <unresolved>"),
-    }
+/// without opening a popup and pressing keys. With a path, that file is
+/// checked instead of the one in the plugin config dir.
+fn check(path: Option<&Path>) -> ExitCode {
+    let config::Loaded {
+        modes, warnings, ..
+    } = match path {
+        Some(p) => {
+            println!("config: {}", p.display());
+            config::load_from(p)
+        }
+        None => {
+            match config::config_path() {
+                Some(p) if p.exists() => println!("config: {}", p.display()),
+                Some(p) => println!(
+                    "config: {} (not present, only the exits are bound)",
+                    p.display()
+                ),
+                None => println!("config: <unresolved>"),
+            }
+            config::load()
+        }
+    };
     println!();
 
     let mut names: Vec<&String> = modes.keys().collect();
     names.sort();
     for name in names {
         let mode = &modes[name];
-        println!("[{}]  label={}  {} bindings", name, mode.label, mode.keys.len());
+        println!(
+            "[{}]  label={}  {} bindings",
+            name,
+            mode.label,
+            mode.keys.len()
+        );
         match mode.hint_text() {
             Some(h) => println!("  {h}"),
             None => println!("  (hint bar hidden)"),
@@ -98,12 +135,41 @@ fn check() -> ExitCode {
     }
 }
 
+/// Print the action table grouped by mode: each name with its hint label and
+/// whether it can leave the tab, which is what makes a sticky binding hop.
+fn list_actions() -> ExitCode {
+    for group in Group::ALL {
+        println!("[{}]", group.as_str());
+        for spec in ACTIONS.iter().filter(|s| s.group == group) {
+            let name = if spec.takes_digit() {
+                format!("{} (bind to 1-9)", spec.name)
+            } else {
+                spec.name.to_string()
+            };
+            let tab = if spec.leaves_tab {
+                "may land on another tab, so a sticky binding hops"
+            } else if spec.closes_tab != ClosesTab::Never {
+                "can close the popup's own tab, so the hop is armed first"
+            } else {
+                "stays on its tab"
+            };
+            println!("  {name:<28} {:<10} {tab}", spec.label);
+        }
+    }
+    ExitCode::SUCCESS
+}
+
+fn plugin_id() -> String {
+    std::env::var("HERDR_PLUGIN_ID").unwrap_or_else(|_| "herdr-modes".to_string())
+}
+
 fn open(entrypoint: &str) -> Result<(), client::Error> {
-    let plugin_id = std::env::var("HERDR_PLUGIN_ID").unwrap_or_else(|_| "herdr-modes".to_string());
+    let plugin_id = plugin_id();
     let mut c = Client::connect()?;
+    let store = Store::from_env();
 
     // A note from a popup that just hopped: carry its state into the new one.
-    let resume = Resume::pending(entrypoint);
+    let resume = store.pending(entrypoint);
     let mut params = json!({
         "plugin_id": plugin_id,
         "entrypoint": entrypoint,
@@ -119,8 +185,10 @@ fn open(entrypoint: &str) -> Result<(), client::Error> {
     let deadline = Instant::now() + HOP_WAIT;
     loop {
         match c.call("plugin.pane.open", params.clone()) {
+            // `clear` leaves a fresh note of another session's alone, so a
+            // plain keypress here cannot cancel a hop in flight elsewhere.
             Ok(_) => {
-                Resume::clear();
+                store.clear();
                 return Ok(());
             }
             // Only one popup may be open at a time. On a plain keypress that
@@ -131,183 +199,80 @@ fn open(entrypoint: &str) -> Result<(), client::Error> {
                     return Ok(());
                 }
                 // The popup calls a hop off by removing the note.
-                if !Resume::still_pending() {
+                if !store.still_pending() {
                     return Ok(());
                 }
                 if Instant::now() >= deadline {
-                    Resume::clear();
+                    store.clear();
                     return Err(e);
                 }
                 std::thread::sleep(HOP_POLL);
             }
             Err(e) => {
-                Resume::clear();
+                store.clear();
                 return Err(e);
             }
         }
     }
 }
 
-/// Restores cooked mode even if the loop exits early.
-struct RawGuard;
-
-impl Drop for RawGuard {
-    fn drop(&mut self) {
-        let _ = disable_raw_mode();
-        let _ = execute!(stdout(), cursor::Show);
-    }
-}
-
 fn run(mode_name: &str) -> Result<(), client::Error> {
-    let (modes, warnings) = config::load();
+    let config::Loaded {
+        modes,
+        ui,
+        warnings,
+    } = config::load();
     let Some(mode) = modes.get(mode_name) else {
-        return Err(client::Error::Protocol(format!("no mode named `{mode_name}`")));
+        return Err(client::Error::Protocol(format!(
+            "no mode named `{mode_name}`"
+        )));
     };
 
-    let ctx: Value = std::env::var("HERDR_PLUGIN_CONTEXT_JSON")
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or(Value::Null);
+    let mut session = session_from_env()?;
+    // The context is a snapshot from when the open was requested, and it may
+    // not name a tab at all. The popup is tied to whatever tab the server has
+    // focused now, so read that back before deciding what counts as leaving.
+    session.refresh()?;
 
-    let client = Client::connect()?;
-    let mut session = modes::Session::new(
-        client,
-        ctx["workspace_id"].as_str().unwrap_or_default().to_string(),
-        ctx["tab_id"].as_str().unwrap_or_default().to_string(),
-        ctx["focused_pane_id"].as_str().unwrap_or_default().to_string(),
-    );
-
-    // Surface config problems where they will actually be seen, then let the
-    // mode carry on with whatever did parse.
-    let mut feedback = match warnings.len() {
-        0 => String::new(),
-        1 => format!("config: {}", warnings[0]),
-        n => format!("config: {} ({} more)", warnings[0], n - 1),
-    };
-
-    if let Some(r) = Resume::from_env() {
-        session.restore(&r);
-        // The context was taken when the open was requested; focus has had
-        // time to settle since, and it is what this popup is now tied to.
-        session.refresh()?;
+    let resumed = Resume::from_env();
+    if let Some(r) = &resumed {
+        session.restore(r);
         // The popup is tied to the server's active tab, but the client may
         // still be looking elsewhere (herdr 0.9.0 only moves the client for
         // explicit focus calls, and a tab that just closed under it lands
         // wherever the client's fallback says). `tab.focus` is explicit, so
         // this puts the client on the popup's tab before the first key.
         session.sync_view()?;
-        if feedback.is_empty() {
-            feedback = r.feedback;
-        }
     }
-    // The tab this popup belongs to. herdr draws the popup and routes keys to
-    // it only while this tab is the one on screen, so leaving it means a hop.
-    let owner_tab_id = session.tab_id.clone();
+    let mut feedback = run::opening_feedback(&warnings, resumed.as_ref());
 
-    enable_raw_mode()?;
-    let _guard = RawGuard;
-    let mut out = stdout();
-    let hint_text = mode.hint_text();
-
+    let mut driver = run::Driver::new(session, mode_name, mode);
+    let mut popup = Popup::open(ui.accent, &mode.label, mode.hint_text())?;
     loop {
-        hint::render(&mut out, &mode.label, hint_text.as_deref(), &feedback)?;
-
-        let Event::Key(key) = event::read()? else {
-            continue;
-        };
-        // With the kitty keyboard protocol active, releases are reported too;
-        // acting on them would fire every binding twice.
-        if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
-            continue;
-        }
-
-        let Some(binding) = mode.lookup(&key) else {
-            feedback = match keymap::KeySpec::from_event(&key) {
-                Some(s) => format!("unbound: {s}"),
-                None => "unbound".into(),
-            };
-            continue;
-        };
-        if matches!(binding.action, Action::Quit) {
-            break;
-        }
-
-        // Taking the owner tab away closes the popup before the request even
-        // returns, so the hop has to be armed beforehand. If the action then
-        // fails, the note is withdrawn and the armed `open` stands down.
-        let armed = match session.will_close_owner_tab(binding.action) {
-            Ok(false) => false,
-            Ok(true) => match session.arm_hop(mode_name, &feedback) {
-                Ok(()) => true,
-                Err(e) => {
-                    feedback = format!("hop failed: {e}");
-                    continue;
-                }
-            },
-            Err(e) => {
-                feedback = format!("error: {e}");
-                continue;
-            }
-        };
-
-        let result = session.execute(binding.action, |label| prompt(&mut out, label));
-        if armed {
-            match result {
-                Ok(_) => break,
-                Err(e) => {
-                    Resume::clear();
-                    feedback = format!("error: {e}");
-                    continue;
-                }
-            }
-        }
-
-        feedback = match result {
-            Ok(msg) => msg,
-            Err(e) => format!("error: {e}"),
-        };
-
-        // `cancel` has already put focus back; staying open would only invite
-        // another move from a place the user just said they were done with.
-        if matches!(binding.action, Action::Cancel) || !binding.sticky {
-            break;
-        }
-
-        // Landed on another tab: this popup is now invisible and deaf where
-        // the user is looking. Hand over to a fresh one there.
-        if binding.action.may_leave_tab()
-            && session.refresh().is_ok()
-            && session.tab_id != owner_tab_id
-        {
-            match session.arm_hop(mode_name, &feedback) {
-                Ok(()) => break,
-                Err(e) => feedback = format!("{feedback} \u{b7} hop failed: {e}"),
-            }
+        popup.render(&feedback)?;
+        let key = popup.next_key()?;
+        match driver.step(&key, &feedback, |label| popup.prompt(label)) {
+            Outcome::Continue(line) => feedback = line,
+            Outcome::Exit | Outcome::Hop => break,
         }
     }
-
     Ok(())
 }
 
-/// Read a line on the feedback row. Returns None if cancelled.
-fn prompt(out: &mut Stdout, label: &str) -> Option<String> {
-    let mut buf = String::new();
-    loop {
-        hint::draw_prompt(out, label, &buf).ok()?;
-        let Ok(Event::Key(key)) = event::read() else {
-            return None;
-        };
-        if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
-            continue;
-        }
-        match key.code {
-            KeyCode::Enter => return Some(buf),
-            KeyCode::Esc => return None,
-            KeyCode::Backspace => {
-                buf.pop();
-            }
-            KeyCode::Char(c) => buf.push(c),
-            _ => {}
-        }
-    }
+/// A session on the herdr socket, starting from the focus the plugin
+/// context reports.
+fn session_from_env() -> Result<Session<Client>, client::Error> {
+    let ctx: Value = std::env::var("HERDR_PLUGIN_CONTEXT_JSON")
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or(Value::Null);
+    let id = |field: &str| ctx[field].as_str().unwrap_or_default().to_string();
+    Ok(Session::new(
+        Client::connect()?,
+        Store::from_env(),
+        plugin_id(),
+        id("workspace_id"),
+        id("tab_id"),
+        id("focused_pane_id"),
+    ))
 }
