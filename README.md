@@ -86,8 +86,8 @@ keymap; see [Configuration](#configuration).
 A keybind invokes a plugin action, which opens a session-modal popup pane
 running the key loop. The popup keeps receiving keystrokes even as pane focus
 moves underneath it, which is what makes stickiness possible. Actions run
-detached without a TTY, so the hop from action to pane is required; it costs
-one round trip on mode entry only.
+detached without a TTY and cannot read keys themselves, so the action's only
+job is to open that popup pane and hand the key loop to it.
 
 Each keystroke is dispatched over the herdr socket API rather than by shelling
 out to the `herdr` binary. That keeps drumming instant, and it is the only way
@@ -187,10 +187,14 @@ a `[[panes]]` entry in `herdr-plugin.toml` and a `[[keys.command]]` in herdr's
 config to open it, but nothing in the binary is hardcoded to the five built-in
 modes.
 
-Validate a config and print the resolved keymaps:
+Validate a config and print the resolved keymaps. `herdr plugin install` does
+not put the binary on your `PATH`; it builds it at `target/release/herdr-modes`
+inside the plugin checkout, which herdr keeps under
+`~/.config/herdr/plugins/github/` in a directory named `herdr-modes-` plus a
+hash:
 
 ```bash
-herdr-modes check
+~/.config/herdr/plugins/github/herdr-modes-*/target/release/herdr-modes check
 ```
 
 It reports unknown actions, unparseable keys and malformed TOML, exits non-zero
@@ -217,8 +221,9 @@ printf '{"id":"1","method":"popup.close","params":{}}\n' | nc -U "$HERDR_SOCKET_
 
 If a mode does not open at all, the `open` action's stderr is in
 `herdr plugin log list`. If a key does nothing and the feedback row starts with
-`config:`, run `herdr-modes check`; it prints every binding that failed to
-parse.
+`config:`, run the binary's `check` command (see
+[Configuration](#configuration) for where it lives); it prints every binding
+that failed to parse.
 
 ## Internals
 

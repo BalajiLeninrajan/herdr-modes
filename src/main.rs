@@ -4,8 +4,8 @@
 //! `run <mode>` runs inside that popup and owns the key loop.
 //! `check` validates the config and prints the resolved keymaps.
 //!
-//! Actions run detached without a TTY, so the action -> pane hop is required;
-//! it costs one round trip on mode entry only.
+//! Actions run detached without a TTY, so `open` only opens the popup pane
+//! that hosts the key loop.
 
 mod client;
 mod config;
