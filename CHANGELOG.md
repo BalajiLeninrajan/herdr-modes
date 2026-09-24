@@ -16,9 +16,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - The hint bar defaults to the terminal's magenta instead of a fixed hex colour.
-- Both hint bar rows are clipped to the popup width so a long legend never wraps into the feedback row.
+- Both hint bar rows are clipped to the popup width so a long legend never wraps into the feedback row. Clipping counts display columns, so a wide character takes two.
 - Mode entry reads focus from the server before choosing the tab the popup belongs to.
 - `open` treats herdr's `ui_busy` error code, as well as its message, as "a popup is already open".
+- `check` reports unknown tables and keys in the config instead of ignoring them.
+- `check` rejects extra arguments and unknown flags with a usage message and exit code 2.
+- Focus feedback at an edge separates the direction and the reason with a middle dot.
+- A resize or any other non-key event no longer cancels a tab or pane rename in progress.
 
 ### Fixed
 
