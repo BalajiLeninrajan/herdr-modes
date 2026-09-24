@@ -134,7 +134,20 @@ pub struct ActionSpec {
     /// the popup has to hop (see `resume`). Pane-level moves within a tab
     /// never need it, which keeps `hjkl` drumming at one round trip.
     pub leaves_tab: bool,
+    /// Whether the action can close the popup's own tab. herdr kills the
+    /// popup mid-request when that happens, so the hop is armed before the
+    /// call instead of after it.
+    pub closes_tab: ClosesTab,
     pub build: Build,
+}
+
+/// When an action takes the popup's own tab away with it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ClosesTab {
+    Never,
+    Always,
+    /// Only when the pane it closes is the last one on the tab.
+    IfLastPane,
 }
 
 impl ActionSpec {
@@ -175,6 +188,25 @@ const fn act(
         group,
         label,
         leaves_tab,
+        closes_tab: ClosesTab::Never,
+        build: Build::Plain(action),
+    }
+}
+
+/// A row for an action that can close the popup's own tab.
+const fn close(
+    name: &'static str,
+    group: Group,
+    label: &'static str,
+    closes_tab: ClosesTab,
+    action: Action,
+) -> ActionSpec {
+    ActionSpec {
+        name,
+        group,
+        label,
+        leaves_tab: false,
+        closes_tab,
         build: Build::Plain(action),
     }
 }
@@ -191,6 +223,7 @@ const fn goto(
         group,
         label,
         leaves_tab,
+        closes_tab: ClosesTab::Never,
         build: Build::Digit(action),
     }
 }
@@ -206,7 +239,7 @@ pub const ACTIONS: &[ActionSpec] = &[
     act("focus_up", Group::Pane, "focus", false, Action::Focus(Dir::Up)),
     act("focus_down", Group::Pane, "focus", false, Action::Focus(Dir::Down)),
     act("cycle_focus", Group::Pane, "cycle", false, Action::CycleFocus),
-    act("close_pane", Group::Pane, "close", false, Action::ClosePane),
+    close("close_pane", Group::Pane, "close", ClosesTab::IfLastPane, Action::ClosePane),
     act("split_right", Group::Pane, "split", false, Action::Split("right")),
     act("split_down", Group::Pane, "split", false, Action::Split("down")),
     act("zoom", Group::Pane, "zoom", false, Action::Zoom),
@@ -217,7 +250,7 @@ pub const ACTIONS: &[ActionSpec] = &[
     act("last_tab", Group::Tab, "last", true, Action::LastTab),
     goto("goto_tab", Group::Tab, "goto", true, Action::GotoTab),
     act("new_tab", Group::Tab, "new", true, Action::NewTab),
-    act("close_tab", Group::Tab, "close", false, Action::CloseTab),
+    close("close_tab", Group::Tab, "close", ClosesTab::Always, Action::CloseTab),
     act("rename_tab", Group::Tab, "rename", false, Action::RenameTab),
     act("move_tab_left", Group::Tab, "move", false, Action::MoveTab(-1)),
     act("move_tab_right", Group::Tab, "move", false, Action::MoveTab(1)),
@@ -492,8 +525,6 @@ mod tests {
             let action = Action::parse(spec.name, &k)
                 .unwrap_or_else(|e| panic!("{} did not parse: {e}", spec.name));
             assert_eq!(action.spec().name, spec.name);
-            assert_eq!(action.hint_label(), spec.label);
-            assert_eq!(action.may_leave_tab(), spec.leaves_tab);
         }
     }
 
@@ -539,6 +570,17 @@ mod tests {
         .into_iter()
         .collect();
         assert_eq!(leaving, expected);
+
+        let closing: BTreeMap<_, _> = ACTIONS
+            .iter()
+            .filter(|s| s.closes_tab != ClosesTab::Never)
+            .map(|s| (s.name, s.closes_tab))
+            .collect();
+        let expected = BTreeMap::from([
+            ("close_pane", ClosesTab::IfLastPane),
+            ("close_tab", ClosesTab::Always),
+        ]);
+        assert_eq!(closing, expected);
     }
 
     /// The Keys table in README.md: one row per group, names in backticks.

@@ -1,7 +1,7 @@
 //! Executes a keymap Action against the herdr socket API.
 
 use crate::client::{Api, Error};
-use crate::keymap::{Action, BreakTo, Dir};
+use crate::keymap::{Action, BreakTo, ClosesTab, Dir};
 use crate::nav;
 use crate::resume::{Resume, Store};
 use serde_json::{Value, json};
@@ -182,10 +182,10 @@ impl<A: Api> Session<A> {
     /// herdr answers by closing the popup before the request even returns.
     /// Such actions arm the hop first, since there is no "after".
     pub fn will_close_owner_tab(&mut self, action: Action) -> Result<bool, Error> {
-        Ok(match action {
-            Action::CloseTab => true,
-            Action::ClosePane => self.tab_panes()?.len() <= 1,
-            _ => false,
+        Ok(match action.spec().closes_tab {
+            ClosesTab::Never => false,
+            ClosesTab::Always => true,
+            ClosesTab::IfLastPane => self.tab_panes()?.len() <= 1,
         })
     }
 

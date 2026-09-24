@@ -19,7 +19,7 @@ mod resume;
 mod run;
 
 use client::Client;
-use keymap::{ACTIONS, Group};
+use keymap::{ACTIONS, ClosesTab, Group};
 use modes::Session;
 use popup::Popup;
 use resume::{Resume, Store};
@@ -145,7 +145,7 @@ fn list_actions() -> ExitCode {
             };
             let tab = if spec.leaves_tab {
                 "may land on another tab, so a sticky binding hops"
-            } else if matches!(spec.name, "close_tab" | "close_pane") {
+            } else if spec.closes_tab != ClosesTab::Never {
                 "can close the popup's own tab, so the hop is armed first"
             } else {
                 "stays on its tab"
