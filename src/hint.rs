@@ -10,6 +10,7 @@ use crossterm::style::{Attribute, Color, Print, ResetColor, SetAttribute, SetFor
 use crossterm::terminal::{Clear, ClearType};
 use crossterm::{cursor, execute, queue};
 use std::io::{Stdout, Write};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 const FEEDBACK_ROW: u16 = 1;
 
@@ -99,16 +100,28 @@ fn clip(text: &str, width: usize) -> String {
     let Some(keep) = width.checked_sub(1) else {
         return String::new();
     };
-    let mut out: String = text.chars().take(keep).collect();
+    // Stop before any char that would cross `keep`, so a wide char is dropped
+    // whole rather than spilling one cell past the edge.
+    let mut out = String::new();
+    let mut used = 0;
+    for c in text.chars() {
+        let w = c.width().unwrap_or(0);
+        if used + w > keep {
+            break;
+        }
+        used += w;
+        out.push(c);
+    }
     out.push(ELLIPSIS);
     out
 }
 
-/// Display width. Everything the bar draws is ASCII, the middle-dot separator
-/// or the ellipsis, all one column each, so a char count is the column count.
-/// Byte length is not: the separator alone is two bytes.
+/// Display width in terminal cells. The feedback row carries agent and space
+/// labels from herdr, and the label and hint come from the user's config, so
+/// any of them can hold CJK or emoji that take two cells. Neither the char
+/// count nor the byte length is the column count.
 fn columns(text: &str) -> usize {
-    text.chars().count()
+    text.width()
 }
 
 #[cfg(test)]
@@ -141,6 +154,20 @@ mod tests {
     fn cut_lands_on_a_char_boundary_around_the_separator() {
         // Cutting at column 12 splits the two-byte dot if bytes were used.
         assert_eq!(clip("hjkl focus \u{b7} x", 13), "hjkl focus \u{b7}\u{2026}");
+    }
+
+    #[test]
+    fn wide_chars_count_two_cells_and_are_never_split() {
+        assert_eq!(columns("\u{7de8}\u{96c6}"), 4);
+        assert_eq!(columns("\u{1f980} crab"), 7);
+        // Three cells hold one wide char plus the ellipsis; a second wide char
+        // would need two more, so it is dropped rather than overflowing.
+        let clipped = clip("\u{7de8}\u{96c6}\u{7de8}\u{96c6}", 4);
+        assert_eq!(clipped, "\u{7de8}\u{2026}");
+        assert_eq!(columns(&clipped), 3);
+        let label = clip(" \u{1f980}\u{1f980} ", 4);
+        assert_eq!(label, " \u{1f980}\u{2026}");
+        assert!(columns(&label) <= 4);
     }
 
     #[test]
