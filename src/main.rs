@@ -44,7 +44,10 @@ fn main() -> ExitCode {
         Some("check") => {
             return match (args.get(2).map(String::as_str), args.get(3)) {
                 (Some("--actions"), None) => list_actions(),
-                (path, None) => check(path.map(Path::new)),
+                // Any other flag, such as --help, is not taken for a path.
+                (path, None) if !path.is_some_and(|p| p.starts_with('-')) => {
+                    check(path.map(Path::new))
+                }
                 _ => {
                     eprintln!("usage: herdr-modes check [path | --actions]");
                     ExitCode::from(2)
