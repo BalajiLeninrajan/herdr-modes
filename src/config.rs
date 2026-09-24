@@ -22,13 +22,17 @@
 
 use crate::keymap::{Action, Binding, KeySpec, MODE_NAMES, Mode, SHARED_EXITS};
 use serde::Deserialize;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 #[derive(Deserialize, Default)]
 struct File {
     #[serde(default)]
     modes: HashMap<String, ModeConfig>,
+    /// Anything else, kept so a misspelt table like `[mode.pane]` is reported
+    /// instead of silently doing nothing.
+    #[serde(flatten)]
+    unknown: BTreeMap<String, toml::Value>,
 }
 
 #[derive(Deserialize, Default)]
@@ -40,6 +44,8 @@ struct ModeConfig {
     defaults: bool,
     #[serde(default)]
     keys: HashMap<String, BindingConfig>,
+    #[serde(flatten)]
+    unknown: BTreeMap<String, toml::Value>,
 }
 
 fn yes() -> bool {
@@ -55,6 +61,10 @@ enum BindingConfig {
     Full {
         action: String,
         sticky: Option<bool>,
+        /// Collected rather than denied: `deny_unknown_fields` inside an
+        /// untagged enum only yields "did not match any variant".
+        #[serde(flatten)]
+        unknown: BTreeMap<String, toml::Value>,
     },
 }
 
@@ -89,6 +99,12 @@ pub fn load_from(path: &Path) -> (HashMap<String, Mode>, Vec<String>) {
 }
 
 fn build(file: File, mut warnings: Vec<String>) -> (HashMap<String, Mode>, Vec<String>) {
+    // Unknown keys are warnings, not parse errors, so a typo costs only the
+    // misspelt part and the rest of the keymap still loads.
+    for key in file.unknown.keys() {
+        warnings.push(format!("unknown key `{key}`"));
+    }
+
     // Every built-in mode, plus any the config names, gets built.
     let names: BTreeSet<&str> = MODE_NAMES
         .iter()
@@ -118,6 +134,9 @@ fn build(file: File, mut warnings: Vec<String>) -> (HashMap<String, Mode>, Vec<S
         }
 
         if let Some(cfg) = cfg {
+            for key in cfg.unknown.keys() {
+                warnings.push(format!("[{name}] unknown key `{key}`"));
+            }
             // TOML tables deserialize unordered; sort so the generated hint bar
             // and any warnings come out the same on every run.
             let mut keys: Vec<_> = cfg.keys.iter().collect();
@@ -125,7 +144,16 @@ fn build(file: File, mut warnings: Vec<String>) -> (HashMap<String, Mode>, Vec<S
             for (key, binding) in keys {
                 let (action, sticky) = match binding {
                     BindingConfig::Action(a) => (a.as_str(), None),
-                    BindingConfig::Full { action, sticky } => (action.as_str(), *sticky),
+                    BindingConfig::Full {
+                        action,
+                        sticky,
+                        unknown,
+                    } => {
+                        for field in unknown.keys() {
+                            warnings.push(format!("[{name}] key `{key}`: unknown field `{field}`"));
+                        }
+                        (action.as_str(), *sticky)
+                    }
                 };
                 let Some(spec) = parse_key(key, name, &mut warnings) else {
                     continue;
@@ -183,4 +211,43 @@ fn insert(
             sticky: sticky.unwrap_or(false),
         },
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn warnings_for(text: &str) -> Vec<String> {
+        let file: File = toml::from_str(text).expect("parse");
+        build(file, Vec::new()).1
+    }
+
+    #[test]
+    fn misspelt_top_level_table_is_reported() {
+        let w = warnings_for("[mode.pane.keys]\nh = \"focus_left\"\n");
+        assert_eq!(w, ["unknown key `mode`"]);
+    }
+
+    #[test]
+    fn misspelt_binding_field_is_reported_and_binding_still_loads() {
+        let text = "[modes.tab.keys]\nn = { action = \"next_tab\", stickey = true }\n";
+        let file: File = toml::from_str(text).expect("parse");
+        let (modes, w) = build(file, Vec::new());
+        assert_eq!(w, ["[tab] key `n`: unknown field `stickey`"]);
+        let n = KeySpec::parse("n").unwrap();
+        assert!(modes["tab"].keys.iter().any(|(k, _)| *k == n));
+    }
+
+    #[test]
+    fn misspelt_mode_field_is_reported() {
+        let w = warnings_for("[modes.pane]\nlable = \"P\"\n");
+        assert_eq!(w, ["[pane] unknown key `lable`"]);
+    }
+
+    #[test]
+    fn example_config_is_clean() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config.example.toml");
+        let (_, w) = load_from(&path);
+        assert!(w.is_empty(), "{w:?}");
+    }
 }
