@@ -339,16 +339,7 @@ mod tests {
 
     #[test]
     fn opening_feedback_prefers_config_problems() {
-        let resumed = Resume::new(
-            MODE,
-            SOCKET,
-            "tab 2/3",
-            None,
-            None,
-            None,
-            "w1".into(),
-            "p1".into(),
-        );
+        let resumed = Resume::new(MODE, "tab 2/3", None, None, None, "w1".into(), "p1".into());
         assert_eq!(opening_feedback(&[], None), "");
         assert_eq!(opening_feedback(&[], Some(&resumed)), "tab 2/3");
         assert_eq!(
