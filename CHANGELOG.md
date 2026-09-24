@@ -8,7 +8,7 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- The hop note records the herdr socket it was written for, so an `open` under another herdr session no longer picks it up or deletes it while it is fresh.
+- Each herdr session keeps its hop note in its own file, named from a hash of its socket path. Before, every session shared one `resume.json`, so an `open` in one session could pick up or delete another's note, and two sessions hopping close together overwrote each other and lost a mode.
 
 ## 0.2.0 - 2026-09-09
 

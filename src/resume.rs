@@ -14,9 +14,9 @@
 //! retries `plugin.pane.open` until the old popup has actually gone, and
 //! hands the note to the new popup through its environment.
 //!
-//! The state dir is per plugin, not per herdr session, so a note also
-//! records the socket it was written for. An `open` running under another
-//! herdr leaves a note that is not its own alone.
+//! The state dir is per plugin, not per herdr session, so each session
+//! keeps its note in a file named from a hash of its socket path. Two herdr
+//! sessions hopping at once then never touch each other's note.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -33,9 +33,6 @@ pub struct Resume {
     pub mode: String,
     /// Set by `new`, so a note is never written unstamped.
     written_unix_ms: u64,
-    /// The herdr session (its socket path) this note belongs to.
-    #[serde(default)]
-    pub socket: String,
     pub prev_tab_id: Option<String>,
     pub prev_agent_id: Option<String>,
     pub prev_workspace_id: Option<String>,
@@ -54,12 +51,10 @@ fn now_ms() -> u64 {
 
 impl Resume {
     /// A note stamped with the current time. `mode` is the entrypoint the
-    /// `open` action will be asked for, `socket` the herdr session it is
-    /// meant for; the rest is what `Session::restore` picks back up.
-    #[allow(clippy::too_many_arguments)]
+    /// `open` action will be asked for; the rest is what `Session::restore`
+    /// picks back up.
     pub fn new(
         mode: &str,
-        socket: &str,
         feedback: &str,
         prev_tab_id: Option<String>,
         prev_agent_id: Option<String>,
@@ -70,7 +65,6 @@ impl Resume {
         Resume {
             mode: mode.to_string(),
             written_unix_ms: now_ms(),
-            socket: socket.to_string(),
             prev_tab_id,
             prev_agent_id,
             prev_workspace_id,
@@ -95,24 +89,30 @@ impl Resume {
     }
 }
 
-/// Where the note lives and which herdr session it is read for. Built from
-/// the environment in `main`, from a temp dir in tests.
+/// Where this herdr session's note lives. Built from the environment in
+/// `main`, from a temp dir in tests.
 #[derive(Clone, Debug)]
 pub struct Store {
     path: PathBuf,
-    socket: String,
+}
+
+/// FNV-1a over the bytes, so a socket path maps to the same file name
+/// whichever build of the plugin wrote or reads it.
+fn fnv1a(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |h, &b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+    })
 }
 
 impl Store {
-    /// The note under `dir`, scoped to the herdr session at `socket`.
+    /// The note under `dir` for the herdr session at `socket`.
     pub fn new(dir: &Path, socket: &str) -> Self {
         Store {
-            path: dir.join("resume.json"),
-            socket: socket.to_string(),
+            path: dir.join(format!("resume-{:016x}.json", fnv1a(socket.as_bytes()))),
         }
     }
 
-    /// `$HERDR_PLUGIN_STATE_DIR/resume.json` for the herdr at
+    /// `$HERDR_PLUGIN_STATE_DIR/resume-<hash>.json` for the herdr at
     /// `$HERDR_SOCKET_PATH`.
     pub fn from_env() -> Self {
         let dir = std::env::var("HERDR_PLUGIN_STATE_DIR")
@@ -120,11 +120,6 @@ impl Store {
             .unwrap_or_else(|_| std::env::temp_dir().join("herdr-modes"));
         let socket = std::env::var("HERDR_SOCKET_PATH").unwrap_or_default();
         Store::new(&dir, &socket)
-    }
-
-    /// The socket path stamped on every note written through this store.
-    pub fn socket(&self) -> &str {
-        &self.socket
     }
 
     /// Leave the note for the `open` action.
@@ -135,20 +130,13 @@ impl Store {
         std::fs::write(&self.path, serde_json::to_vec(note)?)
     }
 
-    /// The note waiting for `open`, if any. A stale or unreadable note is
-    /// removed rather than honoured, so a hop that never finished cannot
-    /// haunt the next plain keypress. A fresh note for another herdr session
-    /// is left alone: it belongs to an `open` that has not run yet.
+    /// The note waiting for `open`, if any. A stale, unreadable or
+    /// other-mode note is removed rather than honoured, so a hop that never
+    /// finished cannot haunt the next plain keypress.
     pub fn pending(&self, mode: &str) -> Option<Resume> {
         let text = std::fs::read_to_string(&self.path).ok()?;
-        let parsed: Option<Resume> = serde_json::from_str(&text).ok();
-        match parsed {
-            Some(r) if !r.fresh() => {
-                let _ = std::fs::remove_file(&self.path);
-                None
-            }
-            Some(r) if r.socket != self.socket => None,
-            Some(r) if r.mode == mode => Some(r),
+        match serde_json::from_str::<Resume>(&text) {
+            Ok(r) if r.fresh() && r.mode == mode => Some(r),
             _ => {
                 let _ = std::fs::remove_file(&self.path);
                 None
@@ -156,28 +144,14 @@ impl Store {
         }
     }
 
-    /// Whatever note is on disk, whichever session and mode it is for.
-    fn read(&self) -> Option<Resume> {
-        let text = std::fs::read_to_string(&self.path).ok()?;
-        serde_json::from_str(&text).ok()
-    }
-
-    /// Whether this session's note is still on disk: the popup deletes it to
-    /// call a hop off after the action it was armed for failed. A note
-    /// another session wrote in the meantime does not count.
+    /// Whether the note is still on disk: the popup deletes it to call a hop
+    /// off after the action it was armed for failed.
     pub fn still_pending(&self) -> bool {
-        self.read().is_some_and(|r| r.socket == self.socket)
+        self.path.exists()
     }
 
-    /// Remove the note, unless it is another session's and still fresh: that
-    /// one belongs to an `open` that has not run yet.
+    /// Remove the note.
     pub fn clear(&self) {
-        if self
-            .read()
-            .is_some_and(|r| r.socket != self.socket && r.fresh())
-        {
-            return;
-        }
         let _ = std::fs::remove_file(&self.path);
     }
 }
@@ -209,10 +183,9 @@ pub fn temp_store(test: &str, socket: &str) -> (TempDir, Store) {
 mod tests {
     use super::*;
 
-    fn note(mode: &str, socket: &str) -> Resume {
+    fn note(mode: &str) -> Resume {
         Resume::new(
             mode,
-            socket,
             "hello",
             Some("t0".into()),
             None,
@@ -223,29 +196,18 @@ mod tests {
     }
 
     #[test]
-    fn pending_returns_a_fresh_note_for_this_session() {
+    fn pending_returns_a_fresh_note_for_this_mode() {
         let (_dir, store) = temp_store("pending_fresh", "/run/herdr/a.sock");
-        let n = note("tab", "/run/herdr/a.sock");
+        let n = note("tab");
         store.write(&n).unwrap();
         assert_eq!(store.pending("tab"), Some(n));
         assert!(store.still_pending());
     }
 
     #[test]
-    fn pending_ignores_but_keeps_a_note_for_another_session() {
-        let (_dir, store) = temp_store("pending_other_socket", "/run/herdr/a.sock");
-        let n = note("tab", "/run/herdr/b.sock");
-        store.write(&n).unwrap();
-        assert_eq!(store.pending("tab"), None);
-        assert!(!store.still_pending(), "not this session's note");
-        let theirs = Store::new(&_dir.0, "/run/herdr/b.sock");
-        assert_eq!(theirs.pending("tab"), Some(n), "their note must survive");
-    }
-
-    #[test]
-    fn pending_removes_a_stale_note_whatever_its_session() {
+    fn pending_removes_a_stale_note() {
         let (_dir, store) = temp_store("pending_stale", "/run/herdr/a.sock");
-        let mut n = note("tab", "/run/herdr/b.sock");
+        let mut n = note("tab");
         n.written_unix_ms = now_ms() - FRESH_FOR.as_millis() as u64 - 1;
         store.write(&n).unwrap();
         assert_eq!(store.pending("tab"), None);
@@ -255,7 +217,7 @@ mod tests {
     #[test]
     fn pending_removes_a_note_for_another_mode() {
         let (_dir, store) = temp_store("pending_other_mode", "/run/herdr/a.sock");
-        store.write(&note("pane", "/run/herdr/a.sock")).unwrap();
+        store.write(&note("pane")).unwrap();
         assert_eq!(store.pending("tab"), None);
         assert!(!store.still_pending());
     }
@@ -271,40 +233,45 @@ mod tests {
     #[test]
     fn clear_removes_the_note() {
         let (_dir, store) = temp_store("clear", "/run/herdr/a.sock");
-        store.write(&note("tab", "/run/herdr/a.sock")).unwrap();
+        store.write(&note("tab")).unwrap();
         store.clear();
         assert!(!store.still_pending());
         assert_eq!(store.pending("tab"), None);
     }
 
+    /// The name has to come out the same from every build, or a popup and
+    /// the `open` it invokes could disagree about where the note is.
     #[test]
-    fn clear_leaves_a_fresh_note_for_another_session() {
-        let (_dir, store) = temp_store("clear_other_socket", "/run/herdr/a.sock");
-        let n = note("tab", "/run/herdr/b.sock");
-        store.write(&n).unwrap();
-        store.clear();
-        assert!(!store.still_pending(), "not this session's note");
-        let theirs = Store::new(&_dir.0, "/run/herdr/b.sock");
-        assert!(theirs.still_pending());
-        assert_eq!(theirs.pending("tab"), Some(n));
+    fn the_file_name_is_a_fixed_hash_of_the_socket() {
+        assert_eq!(fnv1a(b""), 0xcbf2_9ce4_8422_2325);
+        assert_eq!(fnv1a(b"a"), 0xaf63_dc4c_8601_ec8c);
+        let (_dir, store) = temp_store("file_name", "/run/herdr/a.sock");
+        assert_eq!(
+            store.path.file_name().unwrap(),
+            "resume-1efef9257105457d.json"
+        );
     }
 
+    /// Two herdr sessions hopping close together each write a note before
+    /// either `open` has run. Neither may overwrite the other's.
     #[test]
-    fn clear_removes_a_stale_note_for_another_session() {
-        let (_dir, store) = temp_store("clear_other_stale", "/run/herdr/a.sock");
-        let mut n = note("tab", "/run/herdr/b.sock");
-        n.written_unix_ms = now_ms() - FRESH_FOR.as_millis() as u64 - 1;
-        store.write(&n).unwrap();
-        store.clear();
-        assert!(!store.path.exists());
-    }
+    fn two_sessions_keep_their_notes_apart() {
+        let (_dir, a) = temp_store("two_sessions", "/run/herdr/a.sock");
+        let b = Store::new(&_dir.0, "/run/herdr/b.sock");
+        let na = note("tab");
+        let nb = Resume {
+            feedback: "from b".into(),
+            ..note("space")
+        };
+        a.write(&na).unwrap();
+        b.write(&nb).unwrap();
 
-    #[test]
-    fn clear_removes_an_unreadable_note() {
-        let (_dir, store) = temp_store("clear_garbage", "/run/herdr/a.sock");
-        std::fs::write(&store.path, b"{not json").unwrap();
-        store.clear();
-        assert!(!store.path.exists());
+        assert!(a.still_pending());
+        assert_eq!(a.pending("tab"), Some(na));
+        a.clear();
+
+        assert!(b.still_pending());
+        assert_eq!(b.pending("space"), Some(nb));
     }
 
     /// What `open` does on a plain keypress in session A while session B's
@@ -314,7 +281,7 @@ mod tests {
     fn a_plain_open_in_another_session_keeps_the_note() {
         let (_dir, mine) = temp_store("open_other_session", "/run/herdr/a.sock");
         let theirs = Store::new(&_dir.0, "/run/herdr/b.sock");
-        let n = note("tab", "/run/herdr/b.sock");
+        let n = note("tab");
         theirs.write(&n).unwrap();
 
         assert_eq!(mine.pending("tab"), None);
@@ -326,7 +293,7 @@ mod tests {
 
     #[test]
     fn env_round_trip_keeps_every_field() {
-        let n = note("space", "/run/herdr/a.sock");
+        let n = note("space");
         let back: Resume = serde_json::from_str(&n.to_env()).unwrap();
         assert_eq!(back, n);
     }

@@ -138,7 +138,6 @@ impl<A: Api> Session<A> {
     fn resume(&self, mode: &str, feedback: &str) -> Resume {
         Resume::new(
             mode,
-            self.store.socket(),
             feedback,
             self.prev_tab_id.clone(),
             self.prev_agent_id.clone(),
@@ -888,7 +887,6 @@ mod tests {
         );
         let note = s.store.pending("tab").expect("note written");
         assert_eq!(note.mode, "tab");
-        assert_eq!(note.socket, SOCKET);
         assert_eq!(note.feedback, "tab 2/3");
         assert_eq!(note.prev_tab_id.as_deref(), Some("t0"));
         assert_eq!(note.prev_agent_id, None);
@@ -971,7 +969,6 @@ mod tests {
     fn restore_then_resume_round_trips_the_ids() {
         let note = Resume::new(
             "pane",
-            SOCKET,
             "before the hop",
             Some("t0".into()),
             Some("p0".into()),
@@ -989,7 +986,6 @@ mod tests {
         assert_eq!(again.prev_workspace_id.as_deref(), Some("w0"));
         assert_eq!(again.origin_workspace_id, "w9");
         assert_eq!(again.origin_pane_id, "p9");
-        assert_eq!(again.socket, SOCKET);
         assert_eq!(again.feedback, "after the hop");
         assert!(s.api.calls().is_empty());
     }

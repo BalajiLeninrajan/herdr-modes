@@ -242,7 +242,7 @@ Since herdr 0.9.0 a popup belongs to the tab it opened on: the client draws it
 and sends it keys only while that tab is on screen. Pane moves within a tab are
 unaffected, but any action that lands on another tab or space would leave the
 popup behind, alive and invisible. So after such an action the popup *hops*: it
-writes its state to `$HERDR_PLUGIN_STATE_DIR/resume.json`, asks herdr to run
+writes its state to a note in `$HERDR_PLUGIN_STATE_DIR`, asks herdr to run
 the mode's `open` action again, and exits. That action retries
 `plugin.pane.open` until the old popup is gone, opens a fresh one on the new
 tab, and passes the state in through `HERDR_MODES_RESUME`, so `last_tab`,
@@ -250,10 +250,11 @@ tab, and passes the state in through `HERDR_MODES_RESUME`, so `last_tab`,
 own tab (or its last pane) kills the popup mid-request, so those arm the hop
 first. A hop costs one extra process spawn, about a tenth of a second.
 
-The state dir is shared by every herdr session on the machine, so the note
-also records the socket it was written for. An `open` under a different
-`HERDR_SOCKET_PATH` leaves a fresh note alone and only clears it once it is
-older than five seconds.
+The state dir is shared by every herdr session on the machine, so each session
+writes its note to `resume-<hash>.json`, where the hash is FNV-1a of its
+`HERDR_SOCKET_PATH`. Two sessions hopping at the same time never read or
+remove each other's note. A note older than five seconds is ignored and
+removed.
 
 Only `workspace.focus`, `tab.focus` and `pane.focus` move the viewing client
 along with the server's focus. `agent.focus` and `pane.move` change what the
