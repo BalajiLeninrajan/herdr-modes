@@ -12,7 +12,7 @@
 #                         # terminal's magenta
 
 [modes.pane]
-# label = "PANE"          # shown in the hint bar; defaults to the mode name
+# label = "PANE"          # shown in the hint bar; defaults to the mode name in capitals
 # hint  = "custom text"   # defaults to a legend generated from the bindings
 #                         # hint = "" hides the hint bar entirely
 
