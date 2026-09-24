@@ -357,3 +357,50 @@ pub const MODE_NAMES: &[&str] = &["pane", "tab", "move", "agent", "space"];
 /// `shared_except` blocks, so a mode is always escapable before it is
 /// configured. Users can rebind or unbind them per mode like any other key.
 pub const SHARED_EXITS: &[(&str, &str)] = &[("esc", "exit"), ("enter", "exit"), ("ctrl+c", "exit")];
+
+#[cfg(test)]
+mod tests {
+    use super::MODE_NAMES;
+    use std::collections::BTreeSet;
+
+    fn manifest() -> toml::Table {
+        let text = include_str!("../herdr-plugin.toml");
+        text.parse().expect("parse herdr-plugin.toml")
+    }
+
+    /// The ids of one `[[array]]` in herdr-plugin.toml, checking on the way
+    /// that each command ends with its own id.
+    fn ids(m: &toml::Table, array: &str) -> BTreeSet<String> {
+        let entries = m[array].as_array().expect("array of tables");
+        entries
+            .iter()
+            .map(|e| {
+                let id = e["id"].as_str().expect("id").to_string();
+                let last = e["command"].as_array().and_then(|c| c.last());
+                assert_eq!(
+                    last.and_then(|v| v.as_str()),
+                    Some(id.as_str()),
+                    "[[{array}]] `{id}` command must end with its id"
+                );
+                id
+            })
+            .collect()
+    }
+
+    #[test]
+    fn manifest_actions_and_panes_match_mode_names() {
+        let m = manifest();
+        let names: BTreeSet<String> = MODE_NAMES.iter().map(|s| s.to_string()).collect();
+        assert_eq!(ids(&m, "actions"), names, "[[actions]] ids");
+        assert_eq!(ids(&m, "panes"), names, "[[panes]] ids");
+    }
+
+    #[test]
+    fn manifest_description_matches_cargo() {
+        let description = env!("CARGO_PKG_DESCRIPTION");
+        if description.is_empty() {
+            return;
+        }
+        assert_eq!(manifest()["description"].as_str(), Some(description));
+    }
+}
